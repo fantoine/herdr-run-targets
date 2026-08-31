@@ -16,6 +16,7 @@ from run_targets.state import (
     save_state,
     state_path,
 )
+from toggle import decide_toggle
 
 
 @contextlib.contextmanager
@@ -101,6 +102,29 @@ class PruneStateTest(unittest.TestCase):
 
     def test_an_empty_live_set_empties_the_state(self):
         self.assertEqual(prune_state({"w1:t1": TabRecord(None, None, {})}, set()), {})
+
+
+class DecideToggleTest(unittest.TestCase):
+    def test_a_live_control_pane_is_closed(self):
+        state = {"w1:t1": TabRecord(control_pane_id="w1:p1")}
+        self.assertEqual(decide_toggle(state, {"w1:p1": {}}), ("close", "w1:p1"))
+
+    def test_a_tab_with_services_but_no_control_pane_is_reopened(self):
+        state = {"w1:t1": TabRecord(control_pane_id=None, services={"api": ServiceRecord("w1:p2")})}
+        self.assertEqual(decide_toggle(state, {"w1:p2": {}}), ("reopen", "w1:t1"))
+
+    def test_a_dead_control_pane_with_live_services_is_reopened(self):
+        state = {
+            "w1:t1": TabRecord(control_pane_id="w1:p1", services={"api": ServiceRecord("w1:p2")})
+        }
+        self.assertEqual(decide_toggle(state, {"w1:p2": {}}), ("reopen", "w1:t1"))
+
+    def test_an_empty_state_creates(self):
+        self.assertEqual(decide_toggle({}, {}), ("create", None))
+
+    def test_a_tab_whose_panes_all_vanished_creates(self):
+        state = {"w1:t1": TabRecord(control_pane_id="w1:p1", services={"api": ServiceRecord("w1:p2")})}
+        self.assertEqual(decide_toggle(state, {}), ("create", None))
 
 
 if __name__ == "__main__":
