@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -42,6 +43,26 @@ def live_service_pane(record: TabRecord, live_panes: dict[str, dict]) -> str | N
     return None
 
 
+def workspace_cwd_from_context() -> str | None:
+    """Le répertoire de travail du workspace, lu dans le contexte de l'action.
+
+    Herdr injecte `HERDR_PLUGIN_CONTEXT_JSON` ; c'est la seule source du
+    répertoire du projet quand aucun pane de service n'existe encore pour en
+    hériter. Variable absente, JSON invalide, payload non objet ou
+    `workspace_cwd` absent ou non textuel dégradent tous vers None plutôt que
+    de faire échouer l'action : ouvrir sans `--cwd` reproduit le comportement
+    d'avant, pas un crash.
+    """
+    try:
+        payload = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    cwd = payload.get("workspace_cwd")
+    return cwd if isinstance(cwd, str) and cwd else None
+
+
 def main() -> int:
     try:
         live_panes = {
@@ -74,17 +95,29 @@ def main() -> int:
             target_pane = live_service_pane(record, live_panes)
             if target_pane is not None:
                 open_args += ["--target-pane", target_pane]
+                # Herdr lance les commandes de plugin dans le répertoire du
+                # plugin, pas celui du dépôt : sans `--cwd`, le tableau de bord
+                # rouvert résoudrait sa propre racine au lieu de celle du
+                # dépôt observé par le pane de service qu'il rejoint.
+                pane_cwd = live_panes.get(target_pane, {}).get("cwd")
+                if isinstance(pane_cwd, str) and pane_cwd:
+                    open_args += ["--cwd", pane_cwd]
             herdr.herdr_result(open_args)
             print(f"Reopened the dashboard in {argument}.")
         else:
-            herdr.herdr_result(
-                [
-                    "plugin", "pane", "open",
-                    "--plugin", PLUGIN_ID,
-                    "--entrypoint", ENTRYPOINT,
-                    "--placement", "tab",
-                ]
-            )
+            open_args = [
+                "plugin", "pane", "open",
+                "--plugin", PLUGIN_ID,
+                "--entrypoint", ENTRYPOINT,
+                "--placement", "tab",
+            ]
+            # Pas de pane de service pour hériter d'un répertoire : c'est le
+            # contexte de l'action, injecté par Herdr, qui porte celui du
+            # workspace de l'utilisateur.
+            workspace_cwd = workspace_cwd_from_context()
+            if workspace_cwd is not None:
+                open_args += ["--cwd", workspace_cwd]
+            herdr.herdr_result(open_args)
             print("Opened a run-targets tab.")
     except RuntimeError as error:
         sys.stderr.write(f"{error}\n")

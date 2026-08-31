@@ -170,6 +170,71 @@ class ToggleReopenArgsTest(unittest.TestCase):
         self.assertIn("--placement", captured["args"])
         self.assertIn("split", captured["args"])
 
+    def test_the_reopen_call_carries_the_target_panes_cwd(self):
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        state = {"w1:t1": TabRecord(services={"api": ServiceRecord("w1:p2")})}
+        panes = [
+            {"pane_id": "w1:p2", "tab_id": "w1:t1", "cwd": "/private/tmp/run-targets-demo"}
+        ]
+        with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value=state), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(toggle_module.main(), 0)
+        self.assertIn("--cwd", captured["args"])
+        self.assertIn("/private/tmp/run-targets-demo", captured["args"])
+
+
+class ToggleCreateCwdTest(unittest.TestCase):
+    """La création n'a aucun pane à hériter : le répertoire vient du contexte de l'action."""
+
+    def _run_create(self):
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        with patch.object(toggle_module.herdr, "list_panes", return_value=[]), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value={}), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(toggle_module.main(), 0)
+        return captured["args"]
+
+    def test_carries_the_workspace_cwd_from_the_action_context(self):
+        context = '{"workspace_id": "w5", "workspace_cwd": "/private/tmp/run-targets-demo"}'
+        with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": context}, clear=False):
+            args = self._run_create()
+        self.assertIn("--cwd", args)
+        self.assertIn("/private/tmp/run-targets-demo", args)
+
+    def test_omits_cwd_without_the_context_variable(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HERDR_PLUGIN_CONTEXT_JSON", None)
+            args = self._run_create()
+        self.assertNotIn("--cwd", args)
+
+    def test_omits_cwd_with_invalid_json(self):
+        with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": "not json"}, clear=False):
+            args = self._run_create()
+        self.assertNotIn("--cwd", args)
+
+    def test_omits_cwd_without_a_usable_workspace_cwd(self):
+        context = '{"workspace_id": "w5"}'
+        with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": context}, clear=False):
+            args = self._run_create()
+        self.assertNotIn("--cwd", args)
+
 
 if __name__ == "__main__":
     unittest.main()
