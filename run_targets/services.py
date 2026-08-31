@@ -164,8 +164,12 @@ def observe(
 
 
 def _start_in_pane(tab: TabRecord, view: ServiceView, pane_id: str, client) -> None:
-    client.pane_run(pane_id, view.target.command)
+    # Le pane est enregistré avant le lancement : si `pane_run` échoue, le service
+    # reste associé à son pane plutôt que de laisser un pane vivant qu'aucune
+    # entrée du journal ne réclame — un « start » suivant le réutiliserait, là où
+    # un pane orphelin ferait splitter un pane de plus à chaque tentative.
     tab.services[view.target.name] = ServiceRecord(pane_id=pane_id, stop_requested=False)
+    client.pane_run(pane_id, view.target.command)
 
 
 def _create_and_start(

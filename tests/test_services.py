@@ -179,9 +179,6 @@ class FakeClient:
     def pane_close(self, pane_id):
         self.calls.append(("close", pane_id))
 
-    def pane_focus(self, pane_id):
-        self.calls.append(("focus", pane_id))
-
 
 def target(name="api", command="run-it"):
     return Target(name=name, command=command, cwd=None, env={}, origin="team")
@@ -291,6 +288,24 @@ class ApplyActionTest(unittest.TestCase):
         ]
         apply_action("start", views, tab, "/repo", CwdClient(panes={"w1:p1"}), "w1:t1")
         self.assertEqual(captured["cwd"], os.path.join("/repo", "apps/web"))
+
+    def test_a_failed_start_still_tracks_the_pane_it_created(self):
+        """Sans cela, une relance splitterait un pane de plus à chaque échec."""
+        tab = TabRecord("w1:p1", None, {})
+        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7", fail={"run"})
+        views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
+        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(tab.services["api"].pane_id, "w1:p7")
+        self.assertEqual(tab.last_service_pane_id, "w1:p7")
+        self.assertEqual(len(messages), 1)
+
+    def test_restarting_stops_then_starts_in_the_same_pane(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        client = FakeClient(panes={"w1:p1", "w1:p2"}, foreground={"w1:p2": True})
+        views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+        apply_action("restart", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(client.calls, [("keys", "w1:p2", ("ctrl+c",)), ("run", "w1:p2", "run-it")])
+        self.assertFalse(tab.services["api"].stop_requested)
 
 
 if __name__ == "__main__":
