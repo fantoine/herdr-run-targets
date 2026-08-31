@@ -158,7 +158,3 @@ def pane_send_keys(pane_id: str, *keys: str) -> None:
 
 def pane_close(pane_id: str) -> None:
     herdr_call(["pane", "close", pane_id])
-
-
-def pane_focus(pane_id: str) -> None:
-    herdr_call(["pane", "focus", pane_id])

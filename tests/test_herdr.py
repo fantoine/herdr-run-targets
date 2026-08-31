@@ -12,6 +12,8 @@ from run_targets.herdr import (
     has_foreground_command,
     herdr_bin,
     herdr_call,
+    pane_split,
+    panes_in_tab,
     split_args,
 )
 
@@ -112,6 +114,52 @@ class HerdrCallTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
         with patch("run_targets.herdr.subprocess.run", return_value=completed):
             self.assertEqual(herdr_call(["pane", "run", "w1:p1", "x"]), "")
+
+
+class PaneSplitTest(unittest.TestCase):
+    def test_returns_the_id_from_the_response(self):
+        with patch("run_targets.herdr.herdr_result", return_value={"pane": {"pane_id": "w4:p7"}}):
+            self.assertEqual(pane_split("w4:p5", "right"), "w4:p7")
+
+    def test_the_returned_id_is_not_derived_from_the_source(self):
+        """Splitter w4:p5 rend w4:p7 sur Herdr 0.8.2 : les ids ne se suivent pas."""
+        with patch("run_targets.herdr.herdr_result", return_value={"pane": {"pane_id": "w9:p42"}}):
+            self.assertEqual(pane_split("w4:p5", "down"), "w9:p42")
+
+    def test_raises_when_the_response_carries_no_pane(self):
+        with patch("run_targets.herdr.herdr_result", return_value={}):
+            with self.assertRaises(RuntimeError):
+                pane_split("w4:p5", "right")
+
+    def test_raises_when_the_pane_id_is_missing_or_not_a_string(self):
+        for payload in ({"pane": {}}, {"pane": {"pane_id": 7}}, {"pane": {"pane_id": ""}}):
+            with patch("run_targets.herdr.herdr_result", return_value=payload):
+                with self.assertRaises(RuntimeError):
+                    pane_split("w4:p5", "right")
+
+    def test_raises_when_pane_is_not_an_object(self):
+        with patch("run_targets.herdr.herdr_result", return_value={"pane": "w4:p7"}):
+            with self.assertRaises(RuntimeError):
+                pane_split("w4:p5", "right")
+
+
+class PanesInTabTest(unittest.TestCase):
+    def test_keeps_only_the_panes_of_that_tab(self):
+        panes = [
+            {"pane_id": "w1:p1", "tab_id": "w1:t1"},
+            {"pane_id": "w1:p2", "tab_id": "w1:t2"},
+        ]
+        with patch("run_targets.herdr.list_panes", return_value=panes):
+            self.assertEqual(sorted(panes_in_tab("w1:t1")), ["w1:p1"])
+
+    def test_entries_without_a_usable_pane_id_are_dropped(self):
+        panes = [
+            {"tab_id": "w1:t1"},
+            {"pane_id": 7, "tab_id": "w1:t1"},
+            {"pane_id": "w1:p1", "tab_id": "w1:t1"},
+        ]
+        with patch("run_targets.herdr.list_panes", return_value=panes):
+            self.assertEqual(sorted(panes_in_tab("w1:t1")), ["w1:p1"])
 
 
 if __name__ == "__main__":
