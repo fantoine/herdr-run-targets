@@ -7,6 +7,7 @@ des valeurs. C'est ce qui rend la table d'idempotence vérifiable case par case.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -26,6 +27,16 @@ OP_RESTART = "restart"
 OP_CLOSE = "close"
 OP_FORGET = "forget"
 OP_SKIP = "skip"
+
+# Attente d'un arrêt avant de relancer dans le même pane. Un serveur de
+# développement qui gère SIGINT met bien plus que le temps de livraison de la
+# touche à rendre la main ; taper la commande entre-temps la ferait avaler par
+# l'entrée standard du processus mourant, et le service resterait arrêté.
+STOP_POLL_SECONDS = 0.1
+STOP_POLL_ATTEMPTS = 30
+
+# Indirection pour que les tests n'attendent jamais réellement.
+_sleep = time.sleep
 
 
 def derive_state(
@@ -120,6 +131,15 @@ def resolve_selection(
     return []
 
 
+def restart_blocked_message(name: str) -> str:
+    """Le message d'un redémarrage abandonné faute d'arrêt.
+
+    Ne rien dire laisserait croire à un redémarrage réussi, alors que le
+    service tourne encore avec son ancien code.
+    """
+    return f"{name}: still running after stop, restart skipped"
+
+
 def skip_message(name: str, action: str, state: str) -> str:
     """Le message d'une action sans effet.
 
@@ -189,6 +209,20 @@ def _create_and_start(
     _start_in_pane(tab, view, new_pane, client)
 
 
+def _wait_until_stopped(pane_id: str, client) -> bool:
+    """Sonde le premier plan du pane jusqu'à ce qu'il se libère.
+
+    Rend vrai dès que plus rien n'occupe le pane, faux si le budget d'attente
+    expire. Le budget est borné : un service qui refuse de mourir ne doit pas
+    figer le tableau de bord.
+    """
+    for _ in range(STOP_POLL_ATTEMPTS):
+        if not client.has_foreground_command(client.process_info(pane_id)):
+            return True
+        _sleep(STOP_POLL_SECONDS)
+    return not client.has_foreground_command(client.process_info(pane_id))
+
+
 def _forget(tab: TabRecord, name: str) -> None:
     """Retire un service du journal, en gardant `last_service_pane_id` cohérent."""
     record = tab.services.pop(name, None)
@@ -228,7 +262,10 @@ def apply_action(
                     record.stop_requested = True
             elif operation == OP_RESTART:
                 client.pane_send_keys(view.pane_id, "ctrl+c")
-                _start_in_pane(tab, view, view.pane_id, client)
+                if _wait_until_stopped(view.pane_id, client):
+                    _start_in_pane(tab, view, view.pane_id, client)
+                else:
+                    messages.append(restart_blocked_message(name))
             elif operation == OP_CLOSE:
                 client.pane_close(view.pane_id)
                 _forget(tab, name)

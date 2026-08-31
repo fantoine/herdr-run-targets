@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -24,11 +25,17 @@ from run_targets.services import (
     observe,
     plan_action,
     resolve_selection,
+    restart_blocked_message,
     skip_message,
 )
 from run_targets.config import Target
 from run_targets.state import ServiceRecord, TabRecord
 from run_targets.tui import MODE_EDIT, MODE_VIEW, footer_text, format_row
+
+
+def no_sleep():
+    """Neutralise l'attente d'arrêt : aucun test ne doit dormir pour de vrai."""
+    return patch("run_targets.services._sleep", lambda seconds: None)
 
 
 class DeriveStateTest(unittest.TestCase):
@@ -138,9 +145,22 @@ class ResolveSelectionTest(unittest.TestCase):
 
 class SkipMessageTest(unittest.TestCase):
     def test_names_the_target_the_action_and_the_state(self):
-        message = skip_message("db", "stop", STOPPED)
-        self.assertIn("db", message)
-        self.assertIn("stopped", message)
+        self.assertEqual(
+            skip_message("db", "stop", STOPPED), "db: already stopped, stop skipped"
+        )
+
+    def test_the_action_is_part_of_the_message(self):
+        """Deux messages d'omission coexistent désormais ; ils doivent se
+        distinguer par autre chose que le nom du service."""
+        self.assertEqual(
+            skip_message("db", "close", IDLE), "db: already idle, close skipped"
+        )
+
+    def test_a_blocked_restart_says_the_service_is_still_running(self):
+        self.assertEqual(
+            restart_blocked_message("api"),
+            "api: still running after stop, restart skipped",
+        )
 
 
 class FakeClient:
@@ -157,6 +177,7 @@ class FakeClient:
         return {pane_id: {"pane_id": pane_id} for pane_id in self.panes}
 
     def process_info(self, pane_id):
+        self.calls.append(("poll", pane_id))
         return {"pane_id": pane_id}
 
     def has_foreground_command(self, info):
@@ -179,6 +200,28 @@ class FakeClient:
 
     def pane_close(self, pane_id):
         self.calls.append(("close", pane_id))
+
+
+class DyingClient(FakeClient):
+    """Un pane dont le premier plan se libère après `alive_polls` sondages.
+
+    `alive_polls=None` modélise le service qui ignore le ctrl+C.
+    """
+
+    def __init__(self, alive_polls, **kwargs):
+        super().__init__(**kwargs)
+        self.alive_polls = alive_polls
+
+    def process_info(self, pane_id):
+        self.calls.append(("poll", pane_id))
+        if self.alive_polls is None:
+            return {"pane_id": pane_id, "alive": True}
+        alive = self.alive_polls > 0
+        self.alive_polls -= 1
+        return {"pane_id": pane_id, "alive": alive}
+
+    def has_foreground_command(self, info):
+        return info["alive"]
 
 
 def target(name="api", command="run-it"):
@@ -300,13 +343,42 @@ class ApplyActionTest(unittest.TestCase):
         self.assertEqual(tab.last_service_pane_id, "w1:p7")
         self.assertEqual(len(messages), 1)
 
-    def test_restarting_stops_then_starts_in_the_same_pane(self):
+    def test_restarting_waits_for_the_process_to_die_before_starting(self):
+        """Lancer la commande sans attendre la ferait avaler par l'entrée
+        standard du processus mourant : le service resterait arrêté."""
         tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        client = FakeClient(panes={"w1:p1", "w1:p2"}, foreground={"w1:p2": True})
+        client = DyingClient(alive_polls=1, panes={"w1:p1", "w1:p2"})
         views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
-        apply_action("restart", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(client.calls, [("keys", "w1:p2", ("ctrl+c",)), ("run", "w1:p2", "run-it")])
+        with no_sleep():
+            messages = apply_action("restart", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(
+            client.calls,
+            [
+                ("keys", "w1:p2", ("ctrl+c",)),
+                ("poll", "w1:p2"),
+                ("poll", "w1:p2"),
+                ("run", "w1:p2", "run-it"),
+            ],
+        )
+        self.assertEqual(messages, [])
         self.assertFalse(tab.services["api"].stop_requested)
+
+    def test_a_process_that_never_dies_is_not_restarted_but_reported(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        client = DyingClient(alive_polls=None, panes={"w1:p1", "w1:p2"})
+        views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+        with no_sleep():
+            messages = apply_action("restart", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual([call for call in client.calls if call[0] == "run"], [])
+        self.assertEqual(messages, ["api: still running after stop, restart skipped"])
+
+    def test_a_missing_split_target_is_reported_verbatim(self):
+        """Le README documente ce message mot pour mot."""
+        tab = TabRecord(None, None, {})
+        client = FakeClient(panes=set())
+        views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
+        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(messages, ["api: no pane of ours to split from"])
 
 
 class FormatRowTest(unittest.TestCase):
