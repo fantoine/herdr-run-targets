@@ -6,6 +6,9 @@ dashboard: launch several at once, then stop, restart or close them individually
 One tab holds a persistent dashboard pane on the left and a column of service
 panes on the right.
 
+Targets run as commands in your shell, and `.herdr-run.toml` is committed with the
+repository: give it the same trust you give a `Makefile` in a fresh clone.
+
 ## Requirements
 
 - Herdr 0.8.2 or newer
@@ -52,9 +55,9 @@ env = { PORT = "3000" }    # optional
 ```
 
 A local target with the same `name` replaces the team one entirely; a new name is
-appended. The dashboard labels local targets so a command that differs from the
-repository's is never a mystery. Either file alone is enough — you can try a
-target without committing anything.
+appended. The dashboard marks local targets with a trailing `*` so a command that
+differs from the repository's is never a mystery. Either file alone is enough —
+you can try a target without committing anything.
 
 An invalid file does not cost you the other one: the targets of the valid file
 stay available and the parse error is reported.
@@ -62,7 +65,9 @@ stay available and the parse error is reported.
 ## Using the dashboard
 
 The dashboard starts read only. No key destroys anything until you enter edit
-mode.
+mode. The header reads `RUN TARGETS <repository>`, so a dashboard opened on the
+wrong directory says which one it is looking at instead of quietly reporting an
+empty repository.
 
 **View mode**
 
@@ -74,7 +79,9 @@ mode.
 
 There is no key to jump into a service's pane — Herdr 0.8.2 has no way to focus
 an arbitrary pane by id, only a directional `herdr pane focus` between
-neighbours. Move there with the Herdr prefix instead.
+neighbours. The Herdr prefix should get you there, but whether a curses TUI lets
+the prefix through has not been verified. `q` closes the dashboard either way,
+and it also works while the pane is too narrow to draw the table.
 
 **Edit mode**
 
@@ -117,9 +124,27 @@ stop skipped` — rather than silently ignored.
 **Restarting a stopped service starts it.** The point of a restart is to end up
 running.
 
+**Restarting waits for the service to stop.** After the interrupt the plugin
+polls the pane's foreground for up to about three seconds. If the process is
+still there, the command is not sent — typing it into a dying process would only
+feed its stdin — and you get `api: still running after stop, restart skipped`.
+
 **The plugin only ever touches panes it created.** Other plugins put panes in
 your tabs — `herdr-sidebar` docks one in every new tab — and they are never
 split, stopped or closed by this one.
+
+**Toggling the dashboard off closes the tab when nothing is running there.**
+With at least one service pane alive, the toggle removes only the dashboard pane
+and reopens it in place next time. With none, it closes the whole tab and forgets
+it, so repeated toggles never pile up orphan tabs. It only ever closes a tab it
+recorded as its own.
+
+**The column is narrow, and stays narrow.** Service panes are stacked by
+successive splits, so heights halve rather than divide evenly: past two or three
+services you will want to drag the dividers yourself. Rebalancing split ratios is
+out of scope. The dashboard column has the same constraint — it needs at least 30
+columns and 4 rows to draw the table, and below that it shows
+`Too small - q to close`.
 
 ## Troubleshooting
 
@@ -127,15 +152,19 @@ split, stopped or closed by this one.
 herdr plugin log list --plugin fantoine.run-targets --limit 20
 ```
 
-- `No targets. Add .herdr-run.toml or .herdr-run.local.toml` — the merged
-  configuration has no targets: neither file exists at the repository root, or
-  every entry present failed to parse.
+- `No targets in <repository>. Add .herdr-run.toml or .herdr-run.local.toml` —
+  the merged configuration has no targets: neither file exists at the root of the
+  named repository, or every entry present failed to parse. Check the name: if it
+  is not the repository you expected, the pane inherited the wrong working
+  directory.
 - `<file>: invalid TOML (...)` — that file was skipped; the other one still
   applies.
 - `<file>: target 'x' has an unsafe cwd; skipped` — `cwd` must stay inside the
   repository: no absolute path, no `..`.
 - `<name>: no pane of ours to split from` — the dashboard pane vanished. Toggle
   the dashboard to bring it back.
+- `<name>: still running after stop, restart skipped` — the service ignored the
+  interrupt for three seconds. Stop it yourself in its pane, then start it again.
 - `... is not inside a git repository.` — the tab's working directory is outside
   a repository, so no configuration can be found.
 - `herdr <command> failed: <message>` — a Herdr CLI call itself failed; the
