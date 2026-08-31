@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -223,6 +224,14 @@ class ResolveRepoRootTest(unittest.TestCase):
     def test_returns_none_outside_a_repository(self):
         with tempfile.TemporaryDirectory() as root:
             self.assertIsNone(resolve_repo_root(root))
+
+    def test_a_missing_git_degrades_to_none(self):
+        """Sans ce garde-fou, `git` absent remonte une FileNotFoundError avant
+        même le test du code de retour, et le pane meurt sur une trace."""
+        with unittest.mock.patch(
+            "run_targets.config.subprocess.run", side_effect=FileNotFoundError("git")
+        ):
+            self.assertIsNone(resolve_repo_root("/anywhere"))
 
 
 if __name__ == "__main__":

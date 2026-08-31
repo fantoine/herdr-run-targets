@@ -30,8 +30,13 @@ def main() -> int:
     # Le pane de contrôle s'enregistre lui-même : c'est lui, et non l'action,
     # qui connaît son propre identifiant.
     state = load_state()
-    live_tabs = {pane.get("tab_id") for pane in herdr.list_panes()}
-    state = prune_state(state, {tab for tab in live_tabs if isinstance(tab, str)})
+    try:
+        live_tabs = {pane.get("tab_id") for pane in herdr.list_panes()}
+        state = prune_state(state, {tab for tab in live_tabs if isinstance(tab, str)})
+    except RuntimeError as error:
+        # Élaguer est une optimisation, pas une condition d'ouverture : un appel
+        # Herdr en échec ne doit pas empêcher le tableau de bord de s'afficher.
+        sys.stderr.write(f"Could not prune the plugin state: {error}\n")
     record = state.setdefault(tab_id, TabRecord())
     record.control_pane_id = pane_id
     save_state(state)

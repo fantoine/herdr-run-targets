@@ -5,13 +5,19 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tomllib
-from dataclasses import dataclass, field
-from typing import Sequence
 
+# Le garde-fou de version passe avant `tomllib` : ce module n'existe qu'à partir
+# de 3.11, donc l'importer plus haut ferait échouer le plugin sur un
+# `ModuleNotFoundError` illisible, exactement sur les versions que ce message
+# est censé accueillir. Le manifeste invoque `python3` nu ; rien ne garantit
+# que ce soit une 3.11.
 if sys.version_info < (3, 11):
     sys.stderr.write("run-targets requires Python 3.11 or newer.\n")
     raise SystemExit(1)
+
+import tomllib  # noqa: E402  (après le garde-fou de version, volontairement)
+from dataclasses import dataclass, field  # noqa: E402
+from typing import Sequence  # noqa: E402
 
 TEAM_CONFIG_FILE = ".herdr-run.toml"
 LOCAL_CONFIG_FILE = ".herdr-run.local.toml"
@@ -145,12 +151,20 @@ def load_run_config(repo_root: str) -> tuple[list[Target], list[str]]:
 
 
 def resolve_repo_root(cwd: str) -> str | None:
-    """La racine du dépôt contenant `cwd`, ou None hors dépôt."""
-    result = subprocess.run(
-        ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
+    """La racine du dépôt contenant `cwd`, ou None hors dépôt.
+
+    Un `git` absent est traité comme « pas de dépôt » : l'appelant sait déjà
+    dire la chose clairement, là où une `FileNotFoundError` remontée ferait
+    mourir le pane sur une trace d'exécution.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return None
     if result.returncode != 0:
         return None
     root = result.stdout.decode("utf-8", "replace").strip()
