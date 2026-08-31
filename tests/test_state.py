@@ -106,9 +106,29 @@ class PruneStateTest(unittest.TestCase):
 
 
 class DecideToggleTest(unittest.TestCase):
-    def test_a_live_control_pane_is_closed(self):
+    def test_a_live_control_pane_with_services_closes_only_the_pane(self):
+        state = {
+            "w1:t1": TabRecord(
+                control_pane_id="w1:p1", services={"api": ServiceRecord("w1:p2")}
+            )
+        }
+        self.assertEqual(
+            decide_toggle(state, {"w1:p1": {}, "w1:p2": {}}), ("close", "w1:p1")
+        )
+
+    def test_a_tab_without_any_live_service_is_closed_whole(self):
+        """Fermer le seul pane laisserait un onglet que ni « rouvrir » ni
+        « fermer » ne reconnaîtrait : la bascule suivante en créerait un autre."""
         state = {"w1:t1": TabRecord(control_pane_id="w1:p1")}
-        self.assertEqual(decide_toggle(state, {"w1:p1": {}}), ("close", "w1:p1"))
+        self.assertEqual(decide_toggle(state, {"w1:p1": {}}), ("close_tab", "w1:t1"))
+
+    def test_a_tab_whose_services_all_died_is_closed_whole(self):
+        state = {
+            "w1:t1": TabRecord(
+                control_pane_id="w1:p1", services={"api": ServiceRecord("w1:p2")}
+            )
+        }
+        self.assertEqual(decide_toggle(state, {"w1:p1": {}}), ("close_tab", "w1:t1"))
 
     def test_a_tab_with_services_but_no_control_pane_is_reopened(self):
         state = {"w1:t1": TabRecord(control_pane_id=None, services={"api": ServiceRecord("w1:p2")})}
@@ -126,6 +146,48 @@ class DecideToggleTest(unittest.TestCase):
     def test_a_tab_whose_panes_all_vanished_creates(self):
         state = {"w1:t1": TabRecord(control_pane_id="w1:p1", services={"api": ServiceRecord("w1:p2")})}
         self.assertEqual(decide_toggle(state, {}), ("create", None))
+
+
+class ToggleCloseTest(unittest.TestCase):
+    """Ce que la bascule a créé, elle le retire — onglet compris."""
+
+    def _run(self, state, panes):
+        import toggle as toggle_module
+
+        calls = []
+        with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
+             patch.object(
+                 toggle_module.herdr, "pane_close",
+                 lambda pane_id: calls.append(("pane", pane_id))), \
+             patch.object(
+                 toggle_module.herdr, "tab_close",
+                 lambda tab_id: calls.append(("tab", tab_id))), \
+             patch.object(toggle_module, "load_state", return_value=state), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(toggle_module.main(), 0)
+        return calls
+
+    def test_a_tab_with_services_only_loses_its_dashboard_pane(self):
+        state = {
+            "w1:t1": TabRecord(
+                control_pane_id="w1:p1", services={"api": ServiceRecord("w1:p2")}
+            )
+        }
+        panes = [
+            {"pane_id": "w1:p1", "tab_id": "w1:t1"},
+            {"pane_id": "w1:p2", "tab_id": "w1:t1"},
+        ]
+        with state_dir():
+            self.assertEqual(self._run(state, panes), [("pane", "w1:p1")])
+            self.assertIn("w1:t1", state)
+
+    def test_a_tab_without_services_is_closed_and_forgotten(self):
+        state = {"w1:t1": TabRecord(control_pane_id="w1:p1")}
+        panes = [{"pane_id": "w1:p1", "tab_id": "w1:t1"}]
+        with state_dir():
+            self.assertEqual(self._run(state, panes), [("tab", "w1:t1")])
+            self.assertNotIn("w1:t1", state)
+            self.assertEqual(load_state(), {})
 
 
 class LiveServicePaneTest(unittest.TestCase):
@@ -235,6 +297,22 @@ class ToggleCreateCwdTest(unittest.TestCase):
         with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": context}, clear=False):
             args = self._run_create()
         self.assertNotIn("--cwd", args)
+
+
+class DashboardStartupTest(unittest.TestCase):
+    """Le pane de tableau de bord ne doit jamais mourir sur une trace brute :
+    Herdr le retire aussitôt et l'utilisateur ne lit rien."""
+
+    def test_a_missing_git_is_reported_instead_of_raising(self):
+        import dashboard as dashboard_module
+
+        environment = {"HERDR_TAB_ID": "w1:t1", "HERDR_PANE_ID": "w1:p1"}
+        stderr = io.StringIO()
+        with patch.dict(os.environ, environment, clear=False), \
+             patch("run_targets.config.subprocess.run", side_effect=FileNotFoundError("git")), \
+             contextlib.redirect_stderr(stderr):
+            self.assertEqual(dashboard_module.main(), 1)
+        self.assertIn("is not inside a git repository", stderr.getvalue())
 
 
 MANIFEST_PATH = os.path.join(

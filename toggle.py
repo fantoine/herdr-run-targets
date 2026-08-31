@@ -10,10 +10,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run_targets import herdr
-from run_targets.state import TabRecord, load_state
+from run_targets.state import TabRecord, load_state, save_state
 
 PLUGIN_ID = "fantoine.run-targets"
 ENTRYPOINT = "dashboard"
+
+
+def live_service_pane(record: TabRecord, live_panes: dict[str, dict]) -> str | None:
+    """Un pane de service encore vivant de l'onglet, pour servir de point de split."""
+    for service in record.services.values():
+        if service.pane_id in live_panes:
+            return service.pane_id
+    return None
 
 
 def decide_toggle(
@@ -25,22 +33,21 @@ def decide_toggle(
     l'onglet qui héberge encore des services, sinon seulement créer. Sans le
     cas intermédiaire, fermer le tableau de bord laisserait un onglet orphelin
     qu'aucun raccourci ne saurait retrouver.
+
+    Fermer un onglet sans le moindre service vivant ferme l'onglet entier, pas
+    seulement le pane : sinon il resterait un onglet que ni le cas « rouvrir »
+    ni le cas « fermer » ne reconnaîtrait, et chaque bascule suivante en
+    créerait un de plus. Ce que la bascule a créé, elle le retire.
     """
     for tab_id, record in state.items():
         if record.control_pane_id and record.control_pane_id in live_panes:
+            if live_service_pane(record, live_panes) is None:
+                return "close_tab", tab_id
             return "close", record.control_pane_id
     for tab_id, record in state.items():
-        if any(service.pane_id in live_panes for service in record.services.values()):
+        if live_service_pane(record, live_panes) is not None:
             return "reopen", tab_id
     return "create", None
-
-
-def live_service_pane(record: TabRecord, live_panes: dict[str, dict]) -> str | None:
-    """Un pane de service encore vivant de l'onglet, pour servir de point de split."""
-    for service in record.services.values():
-        if service.pane_id in live_panes:
-            return service.pane_id
-    return None
 
 
 def workspace_cwd_from_context() -> str | None:
@@ -50,8 +57,11 @@ def workspace_cwd_from_context() -> str | None:
     répertoire du projet quand aucun pane de service n'existe encore pour en
     hériter. Variable absente, JSON invalide, payload non objet ou
     `workspace_cwd` absent ou non textuel dégradent tous vers None plutôt que
-    de faire échouer l'action : ouvrir sans `--cwd` reproduit le comportement
-    d'avant, pas un crash.
+    de faire échouer l'action. La dégradation n'est pas anodine : sans `--cwd`,
+    le pane hérite du répertoire du plugin — lui-même un dépôt git — et le
+    tableau de bord annonce « aucune target » pour le mauvais dépôt. C'est
+    pourquoi l'en-tête nomme le dépôt résolu : faute visible plutôt que
+    réponse fausse et silencieuse.
     """
     try:
         payload = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
@@ -81,6 +91,16 @@ def main() -> int:
         if decision == "close":
             herdr.pane_close(argument)
             print(f"Closed the dashboard pane {argument}.")
+        elif decision == "close_tab":
+            # Le garde-fou structurel du plugin vaut aussi pour les onglets :
+            # on ne ferme que ce que le journal réclame comme sien.
+            if argument not in state:
+                sys.stderr.write(f"{argument} is not a run-targets tab.\n")
+                return 1
+            herdr.tab_close(argument)
+            del state[argument]
+            save_state(state)
+            print(f"Closed the run-targets tab {argument}.")
         elif decision == "reopen":
             # Le tableau de bord se réinstalle dans l'onglet existant : il est
             # ouvert comme un split d'un pane de service encore vivant, cible
