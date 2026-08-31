@@ -142,9 +142,9 @@ recorded as its own.
 **The column is narrow, and stays narrow.** Service panes are stacked by
 successive splits, so heights halve rather than divide evenly: past two or three
 services you will want to drag the dividers yourself. Rebalancing split ratios is
-out of scope. The dashboard column has the same constraint — it needs at least 30
-columns and 4 rows to draw the table, and below that it shows
-`Too small - q to close`.
+out of scope. The dashboard column has the same constraint — below 30 columns or
+4 rows it shows `Too small - q to close`, and it needs a fifth row before the
+first service line has anywhere to go.
 
 ## Troubleshooting
 

@@ -566,6 +566,31 @@ class DashboardTickTest(unittest.TestCase):
                 dashboard.messages, ["herdr pane list failed: socket closed"]
             )
 
+    def test_the_refresh_that_follows_an_action_is_guarded_too(self):
+        """`act` est le moment le plus exposé — le plugin vient d'enchaîner
+        plusieurs appels Herdr — et sa relecture doit passer par la même route
+        gardée que la boucle périodique."""
+        import tempfile
+        from run_targets.tui import Dashboard
+
+        class Broken:
+            def panes_in_tab(self, tab_id):
+                raise RuntimeError("herdr pane list failed: socket closed")
+
+        with tempfile.TemporaryDirectory() as root:
+            dashboard = Dashboard(tab_id="w1:t1", repo_root=root, warnings=[])
+            previous = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+            dashboard.views = previous
+            with patch("run_targets.tui.herdr", Broken()), \
+                 patch.dict(os.environ, {"HERDR_PLUGIN_STATE_DIR": root}, clear=False):
+                dashboard.act("start")
+            self.assertEqual(dashboard.views, previous)
+            # L'erreur prend la place du retour de l'action : savoir que
+            # l'affichage n'est plus fiable prime sur un « skipped ».
+            self.assertEqual(
+                dashboard.messages, ["herdr pane list failed: socket closed"]
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

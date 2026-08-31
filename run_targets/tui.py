@@ -160,7 +160,13 @@ class Dashboard:
         save_state(state)
         self.checked.clear()
         self.mode = MODE_VIEW
-        self.refresh()
+        # Même route gardée que la boucle périodique : le rafraîchissement qui
+        # suit une action est le plus exposé — le plugin vient d'enchaîner
+        # plusieurs appels Herdr — et il ne doit pas plus qu'un autre remonter
+        # jusqu'à `curses.wrapper`. Si ce rafraîchissement échoue, l'erreur
+        # remplace le retour de l'action : ce que l'utilisateur doit lire en
+        # priorité, c'est que l'affichage n'est plus fiable.
+        self.tick()
 
 
 def run_dashboard(stdscr, dashboard: Dashboard) -> None:
