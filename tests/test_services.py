@@ -28,6 +28,7 @@ from run_targets.services import (
 )
 from run_targets.config import Target
 from run_targets.state import ServiceRecord, TabRecord
+from run_targets.tui import MODE_EDIT, MODE_VIEW, footer_text, format_row
 
 
 class DeriveStateTest(unittest.TestCase):
@@ -306,6 +307,53 @@ class ApplyActionTest(unittest.TestCase):
         apply_action("restart", views, tab, "/repo", client, "w1:t1")
         self.assertEqual(client.calls, [("keys", "w1:p2", ("ctrl+c",)), ("run", "w1:p2", "run-it")])
         self.assertFalse(tab.services["api"].stop_requested)
+
+
+class FormatRowTest(unittest.TestCase):
+    def _view(self, state=RUNNING, origin="team"):
+        return ServiceView(
+            target=Target("api", "cmd", cwd=None, env={}, origin=origin),
+            state=state,
+            pane_id="w1:p2",
+        )
+
+    def test_view_mode_shows_no_checkbox(self):
+        row = format_row(self._view(), checked=False, cursor=False, mode=MODE_VIEW)
+        self.assertNotIn("[", row)
+        self.assertIn("api", row)
+        self.assertIn("running", row)
+
+    def test_edit_mode_shows_an_empty_checkbox(self):
+        row = format_row(self._view(), checked=False, cursor=False, mode=MODE_EDIT)
+        self.assertIn("[ ]", row)
+
+    def test_edit_mode_shows_a_checked_checkbox(self):
+        row = format_row(self._view(), checked=True, cursor=False, mode=MODE_EDIT)
+        self.assertIn("[x]", row)
+
+    def test_the_cursor_row_is_marked(self):
+        row = format_row(self._view(), checked=False, cursor=True, mode=MODE_VIEW)
+        self.assertTrue(row.startswith(">"))
+
+    def test_a_local_target_is_labelled(self):
+        row = format_row(self._view(origin="local"), checked=False, cursor=False, mode=MODE_VIEW)
+        self.assertIn("local", row)
+
+    def test_a_team_target_carries_no_origin_label(self):
+        row = format_row(self._view(origin="team"), checked=False, cursor=False, mode=MODE_VIEW)
+        self.assertNotIn("team", row)
+
+
+class FooterTextTest(unittest.TestCase):
+    def test_view_mode_advertises_edit_and_quit(self):
+        text = footer_text(MODE_VIEW)
+        self.assertIn("e", text)
+        self.assertIn("q", text)
+
+    def test_edit_mode_advertises_the_actions(self):
+        text = footer_text(MODE_EDIT)
+        for key in ("space", "enter", "s", "r", "x", "esc"):
+            self.assertIn(key, text)
 
 
 if __name__ == "__main__":
