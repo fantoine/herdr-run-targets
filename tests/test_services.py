@@ -356,5 +356,39 @@ class FooterTextTest(unittest.TestCase):
             self.assertIn(key, text)
 
 
+class DashboardMessagesTest(unittest.TestCase):
+    """Le retour d'une action doit survivre au rafraîchissement qui le suit."""
+
+    def test_refresh_does_not_erase_the_action_feedback(self):
+        from unittest.mock import patch
+        import tempfile
+        from run_targets.tui import Dashboard
+
+        class NoPanes:
+            def panes_in_tab(self, tab_id):
+                return {}
+
+            def process_info(self, pane_id):
+                return {}
+
+            def has_foreground_command(self, info):
+                return False
+
+        with tempfile.TemporaryDirectory() as root:
+            # Un doublon dans un même fichier produit un avertissement à chaque
+            # lecture : c'est la condition qui faisait disparaître le message.
+            with open(os.path.join(root, ".herdr-run.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    '[[target]]\nname = "api"\ncommand = "a"\n'
+                    '[[target]]\nname = "api"\ncommand = "b"\n'
+                )
+            dashboard = Dashboard(tab_id="w1:t1", repo_root=root, warnings=[])
+            dashboard.messages = ["api: already stopped, stop skipped"]
+            with patch("run_targets.tui.herdr", NoPanes()):
+                dashboard.refresh()
+            self.assertEqual(dashboard.messages, ["api: already stopped, stop skipped"])
+            self.assertTrue(dashboard.warnings)
+
+
 if __name__ == "__main__":
     unittest.main()

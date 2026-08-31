@@ -46,7 +46,8 @@ class Dashboard:
         self.mode = MODE_VIEW
         self.cursor = 0
         self.checked: set[str] = set()
-        self.messages: list[str] = list(warnings)
+        self.warnings: list[str] = list(warnings)
+        self.messages: list[str] = []
         self.views: list[ServiceView] = []
 
     def names(self) -> list[str]:
@@ -62,8 +63,11 @@ class Dashboard:
 
     def refresh(self) -> None:
         targets, warnings = load_run_config(self.repo_root)
-        if warnings:
-            self.messages = warnings
+        # `refresh` ne touche jamais `messages` : un avertissement de configuration
+        # est un état permanent des fichiers, le retour d'une action est un
+        # événement ponctuel. Les confondre effacerait le « skipped » que
+        # l'utilisateur doit voir, à chaque rafraîchissement.
+        self.warnings = warnings
         self.views = observe(self.tab(), targets, herdr, self.tab_id)
         if self.cursor >= len(self.views):
             self.cursor = max(0, len(self.views) - 1)
@@ -115,8 +119,9 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         if not dashboard.views:
             stdscr.addstr(2, 0, "No targets. Add .herdr-run.toml or .herdr-run.local.toml"[: width - 1])
 
-        if dashboard.messages:
-            stdscr.addstr(height - 2, 0, dashboard.messages[0][: width - 1])
+        footer_message = dashboard.messages or dashboard.warnings
+        if footer_message:
+            stdscr.addstr(height - 2, 0, footer_message[0][: width - 1])
         attribute = curses.A_REVERSE if dashboard.mode == MODE_EDIT else curses.A_DIM
         stdscr.addstr(height - 1, 0, footer_text(dashboard.mode)[: width - 1], attribute)
         stdscr.refresh()
