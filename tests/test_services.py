@@ -17,12 +17,16 @@ from run_targets.services import (
     OP_STOP,
     RUNNING,
     STOPPED,
+    ServiceView,
+    apply_action,
     derive_state,
     next_split_target,
+    observe,
     plan_action,
     resolve_selection,
     skip_message,
 )
+from run_targets.config import Target
 from run_targets.state import ServiceRecord, TabRecord
 
 
@@ -136,6 +140,157 @@ class SkipMessageTest(unittest.TestCase):
         message = skip_message("db", "stop", STOPPED)
         self.assertIn("db", message)
         self.assertIn("stopped", message)
+
+
+class FakeClient:
+    """Un double du module `herdr`, qui enregistre ce qu'on lui demande."""
+
+    def __init__(self, panes=None, foreground=None, split_result="w1:p9", fail=None):
+        self.panes = panes if panes is not None else {}
+        self.foreground = foreground or {}
+        self.split_result = split_result
+        self.fail = fail or set()
+        self.calls = []
+
+    def panes_in_tab(self, tab_id):
+        return {pane_id: {"pane_id": pane_id} for pane_id in self.panes}
+
+    def process_info(self, pane_id):
+        return {"pane_id": pane_id}
+
+    def has_foreground_command(self, info):
+        return self.foreground.get(info["pane_id"], False)
+
+    def pane_split(self, pane_id, direction, ratio=None, cwd=None, env=None):
+        self.calls.append(("split", pane_id, direction))
+        if "split" in self.fail:
+            raise RuntimeError("split refused")
+        self.panes.add(self.split_result) if isinstance(self.panes, set) else None
+        return self.split_result
+
+    def pane_run(self, pane_id, command):
+        self.calls.append(("run", pane_id, command))
+        if "run" in self.fail:
+            raise RuntimeError("run refused")
+
+    def pane_send_keys(self, pane_id, *keys):
+        self.calls.append(("keys", pane_id, keys))
+
+    def pane_close(self, pane_id):
+        self.calls.append(("close", pane_id))
+
+    def pane_focus(self, pane_id):
+        self.calls.append(("focus", pane_id))
+
+
+def target(name="api", command="run-it"):
+    return Target(name=name, command=command, cwd=None, env={}, origin="team")
+
+
+class ObserveTest(unittest.TestCase):
+    def test_an_untracked_target_is_idle(self):
+        tab = TabRecord("w1:p1", None, {})
+        views = observe(tab, [target()], FakeClient(panes={"w1:p1"}), "w1:t1")
+        self.assertEqual(views[0].state, IDLE)
+        self.assertIsNone(views[0].pane_id)
+
+    def test_a_tracked_pane_with_a_foreground_process_is_running(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        client = FakeClient(panes={"w1:p1", "w1:p2"}, foreground={"w1:p2": True})
+        views = observe(tab, [target()], client, "w1:t1")
+        self.assertEqual(views[0].state, RUNNING)
+        self.assertEqual(views[0].pane_id, "w1:p2")
+
+    def test_a_tracked_pane_that_vanished_is_gone(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        views = observe(tab, [target()], FakeClient(panes={"w1:p1"}), "w1:t1")
+        self.assertEqual(views[0].state, GONE)
+
+
+class ApplyActionTest(unittest.TestCase):
+    def test_starting_an_idle_target_splits_then_runs(self):
+        tab = TabRecord("w1:p1", None, {})
+        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
+        views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
+        apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(client.calls[0], ("split", "w1:p1", "right"))
+        self.assertEqual(client.calls[1], ("run", "w1:p7", "run-it"))
+        self.assertEqual(tab.services["api"].pane_id, "w1:p7")
+        self.assertEqual(tab.last_service_pane_id, "w1:p7")
+        self.assertFalse(tab.services["api"].stop_requested)
+
+    def test_starting_a_stopped_target_reuses_its_pane(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2", stop_requested=True)})
+        client = FakeClient(panes={"w1:p1", "w1:p2"})
+        views = [ServiceView(target=target(), state=STOPPED, pane_id="w1:p2")]
+        apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(client.calls, [("run", "w1:p2", "run-it")])
+        self.assertFalse(tab.services["api"].stop_requested)
+
+    def test_stopping_sends_ctrl_c_and_records_the_request(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        client = FakeClient(panes={"w1:p1", "w1:p2"}, foreground={"w1:p2": True})
+        views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+        apply_action("stop", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(client.calls, [("keys", "w1:p2", ("ctrl+c",))])
+        self.assertTrue(tab.services["api"].stop_requested)
+
+    def test_closing_removes_the_pane_and_forgets_the_service(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        client = FakeClient(panes={"w1:p1", "w1:p2"})
+        views = [ServiceView(target=target(), state=STOPPED, pane_id="w1:p2")]
+        apply_action("close", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(client.calls, [("close", "w1:p2")])
+        self.assertNotIn("api", tab.services)
+        self.assertIsNone(tab.last_service_pane_id)
+
+    def test_closing_a_gone_service_only_forgets_it(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        client = FakeClient(panes={"w1:p1"})
+        views = [ServiceView(target=target(), state=GONE, pane_id="w1:p2")]
+        apply_action("close", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(client.calls, [])
+        self.assertNotIn("api", tab.services)
+
+    def test_a_skipped_action_is_reported_and_touches_nothing(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2", stop_requested=True)})
+        client = FakeClient(panes={"w1:p1", "w1:p2"})
+        views = [ServiceView(target=target(), state=STOPPED, pane_id="w1:p2")]
+        messages = apply_action("stop", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(client.calls, [])
+        self.assertEqual(len(messages), 1)
+        self.assertIn("skipped", messages[0])
+
+    def test_one_failing_target_does_not_stop_the_others(self):
+        tab = TabRecord("w1:p1", None, {})
+        client = FakeClient(panes={"w1:p1"}, fail={"run"})
+        views = [
+            ServiceView(target=target("api"), state=IDLE, pane_id=None),
+            ServiceView(target=target("web"), state=IDLE, pane_id=None),
+        ]
+        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertEqual(len([c for c in client.calls if c[0] == "split"]), 2)
+        self.assertEqual(len(messages), 2)
+        self.assertTrue(all("refused" in m for m in messages))
+
+    def test_a_target_cwd_is_resolved_against_the_repository_root(self):
+        tab = TabRecord("w1:p1", None, {})
+        captured = {}
+
+        class CwdClient(FakeClient):
+            def pane_split(self, pane_id, direction, ratio=None, cwd=None, env=None):
+                captured["cwd"] = cwd
+                return "w1:p7"
+
+        views = [
+            ServiceView(
+                target=Target("web", "serve", cwd="apps/web", env={}, origin="team"),
+                state=IDLE,
+                pane_id=None,
+            )
+        ]
+        apply_action("start", views, tab, "/repo", CwdClient(panes={"w1:p1"}), "w1:t1")
+        self.assertEqual(captured["cwd"], os.path.join("/repo", "apps/web"))
 
 
 if __name__ == "__main__":

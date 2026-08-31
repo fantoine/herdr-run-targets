@@ -6,8 +6,11 @@ des valeurs. C'est ce qui rend la table d'idempotence vérifiable case par case.
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from typing import Sequence
 
+from .config import Target
 from .state import ServiceRecord, TabRecord
 
 RUNNING = "running"
@@ -123,3 +126,110 @@ def skip_message(name: str, action: str, state: str) -> str:
     Une action ignorée en silence est indistinguable d'une touche non prise.
     """
     return f"{name}: already {state}, {action} skipped"
+
+
+@dataclass
+class ServiceView:
+    """Une target et ce qu'on observe d'elle en ce moment."""
+
+    target: Target
+    state: str
+    pane_id: str | None
+
+
+def observe(
+    tab: TabRecord, targets: Sequence[Target], client, tab_id: str
+) -> list[ServiceView]:
+    """Recalcule l'état de chaque target depuis Herdr.
+
+    L'état n'est jamais lu depuis le journal seul : celui-ci dit quels panes
+    appartiennent au plugin, l'observation dit ce qui s'y passe.
+    """
+    live = set(client.panes_in_tab(tab_id))
+    views: list[ServiceView] = []
+    for target in targets:
+        record = tab.services.get(target.name)
+        pane_alive = record is not None and record.pane_id in live
+        foreground = False
+        if pane_alive:
+            foreground = client.has_foreground_command(client.process_info(record.pane_id))
+        views.append(
+            ServiceView(
+                target=target,
+                state=derive_state(record, pane_alive, foreground),
+                pane_id=record.pane_id if record is not None else None,
+            )
+        )
+    return views
+
+
+def _start_in_pane(tab: TabRecord, view: ServiceView, pane_id: str, client) -> None:
+    client.pane_run(pane_id, view.target.command)
+    tab.services[view.target.name] = ServiceRecord(pane_id=pane_id, stop_requested=False)
+
+
+def _create_and_start(
+    tab: TabRecord, view: ServiceView, repo_root: str, client, tab_id: str
+) -> None:
+    live = set(client.panes_in_tab(tab_id))
+    destination = next_split_target(tab, live)
+    if destination is None:
+        raise RuntimeError("no pane of ours to split from")
+    pane_id, direction = destination
+    cwd = os.path.join(repo_root, view.target.cwd) if view.target.cwd else repo_root
+    ratio = 0.25 if direction == "right" else None
+    new_pane = client.pane_split(
+        pane_id, direction, ratio=ratio, cwd=cwd, env=view.target.env or None
+    )
+    tab.last_service_pane_id = new_pane
+    _start_in_pane(tab, view, new_pane, client)
+
+
+def _forget(tab: TabRecord, name: str) -> None:
+    """Retire un service du journal, en gardant `last_service_pane_id` cohérent."""
+    record = tab.services.pop(name, None)
+    if record is not None and tab.last_service_pane_id == record.pane_id:
+        remaining = [service.pane_id for service in tab.services.values()]
+        tab.last_service_pane_id = remaining[-1] if remaining else None
+
+
+def apply_action(
+    action: str,
+    views: Sequence[ServiceView],
+    tab: TabRecord,
+    repo_root: str,
+    client,
+    tab_id: str,
+) -> list[str]:
+    """Applique une action à une sélection, et rend les messages à afficher.
+
+    Une target en échec n'interrompt pas les suivantes : un lot à moitié lancé
+    vaut mieux qu'un lot abandonné à la première erreur.
+    """
+    messages: list[str] = []
+    for view in views:
+        operation = plan_action(action, view.state)
+        name = view.target.name
+        try:
+            if operation == OP_SKIP:
+                messages.append(skip_message(name, action, view.state))
+            elif operation == OP_CREATE:
+                _create_and_start(tab, view, repo_root, client, tab_id)
+            elif operation == OP_START:
+                _start_in_pane(tab, view, view.pane_id, client)
+            elif operation == OP_STOP:
+                client.pane_send_keys(view.pane_id, "ctrl+c")
+                record = tab.services.get(name)
+                if record is not None:
+                    record.stop_requested = True
+            elif operation == OP_RESTART:
+                client.pane_send_keys(view.pane_id, "ctrl+c")
+                _start_in_pane(tab, view, view.pane_id, client)
+            elif operation == OP_CLOSE:
+                client.pane_close(view.pane_id)
+                _forget(tab, name)
+            elif operation == OP_FORGET:
+                _forget(tab, name)
+        except RuntimeError as error:
+            messages.append(f"{name}: {error}")
+    return messages
