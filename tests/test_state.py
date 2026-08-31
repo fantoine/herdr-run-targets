@@ -16,7 +16,7 @@ from run_targets.state import (
     save_state,
     state_path,
 )
-from toggle import decide_toggle
+from toggle import decide_toggle, live_service_pane
 
 
 @contextlib.contextmanager
@@ -125,6 +125,50 @@ class DecideToggleTest(unittest.TestCase):
     def test_a_tab_whose_panes_all_vanished_creates(self):
         state = {"w1:t1": TabRecord(control_pane_id="w1:p1", services={"api": ServiceRecord("w1:p2")})}
         self.assertEqual(decide_toggle(state, {}), ("create", None))
+
+
+class LiveServicePaneTest(unittest.TestCase):
+    def test_returns_the_live_service_pane(self):
+        record = TabRecord(services={"api": ServiceRecord("w1:p2")})
+        self.assertEqual(live_service_pane(record, {"w1:p2": {}}), "w1:p2")
+
+    def test_skips_services_whose_pane_is_gone(self):
+        record = TabRecord(
+            services={"api": ServiceRecord("w1:p2"), "web": ServiceRecord("w1:p3")}
+        )
+        self.assertEqual(live_service_pane(record, {"w1:p3": {}}), "w1:p3")
+
+    def test_returns_none_without_any_live_service(self):
+        record = TabRecord(services={"api": ServiceRecord("w1:p2")})
+        self.assertIsNone(live_service_pane(record, {}))
+
+    def test_returns_none_without_any_service(self):
+        self.assertIsNone(live_service_pane(TabRecord(), {"w1:p2": {}}))
+
+
+class ToggleReopenArgsTest(unittest.TestCase):
+    """La réouverture doit passer un pane source au split, sinon Herdr n'a rien à couper."""
+
+    def test_the_reopen_call_carries_the_live_service_pane(self):
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        state = {"w1:t1": TabRecord(services={"api": ServiceRecord("w1:p2")})}
+        panes = [{"pane_id": "w1:p2", "tab_id": "w1:t1"}]
+        with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value=state), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(toggle_module.main(), 0)
+        self.assertIn("--target-pane", captured["args"])
+        self.assertIn("w1:p2", captured["args"])
+        self.assertIn("--placement", captured["args"])
+        self.assertIn("split", captured["args"])
 
 
 if __name__ == "__main__":
