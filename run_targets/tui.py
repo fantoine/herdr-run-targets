@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import curses
+import os
 import time
 
 from . import herdr
@@ -15,13 +16,65 @@ MODE_EDIT = "edit"
 
 REFRESH_SECONDS = 1.0
 
+# Un retour d'action est un événement ponctuel : passé ce délai il s'efface, ce
+# qui rend de nouveau visibles les avertissements de configuration, eux
+# permanents. Sans expiration, un seul « skipped » les masquerait pour toujours.
+MESSAGE_SECONDS = 6.0
+
+NAME_WIDTH = 12
+STATE_WIDTH = 8
+LOCAL_MARKER = " *"
+SMALL_SCREEN_TEXT = "Too small - q to close"
+
 
 def format_row(view: ServiceView, checked: bool, cursor: bool, mode: str) -> str:
-    """Une ligne du tableau, en texte pur pour rester testable."""
+    """Une ligne du tableau, en texte pur pour rester testable.
+
+    Les colonnes sont taillées pour qu'une ligne complète tienne dans les 30
+    caractères minimaux du tableau de bord : au-delà, c'est le marqueur
+    d'origine qui disparaissait le premier, et la promesse « une commande
+    différente n'est jamais un mystère » avec lui.
+    """
     marker = ">" if cursor else " "
     box = ("[x] " if checked else "[ ] ") if mode == MODE_EDIT else ""
-    origin = "  local" if view.target.origin == ORIGIN_LOCAL else ""
-    return f"{marker} {box}{view.target.name:<16}{view.state:<10}{origin}"
+    origin = LOCAL_MARKER if view.target.origin == ORIGIN_LOCAL else ""
+    name = view.target.name[:NAME_WIDTH]
+    return f"{marker} {box}{name:<{NAME_WIDTH}}{view.state:<{STATE_WIDTH}}{origin}"
+
+
+def header_text(repo_root: str) -> str:
+    """Le titre, qui nomme le dépôt observé.
+
+    Sans ce nom, un tableau de bord ouvert sur le mauvais répertoire — le
+    plugin est lui-même un dépôt git — annonce « aucune target » avec le même
+    aplomb qu'un dépôt réellement vide.
+    """
+    return f"RUN TARGETS  {os.path.basename(os.path.normpath(repo_root))}"
+
+
+def empty_text(repo_root: str) -> str:
+    """La ligne d'un dépôt sans target, qui nomme le répertoire inspecté."""
+    name = os.path.basename(os.path.normpath(repo_root))
+    return f"No targets in {name}. Add .herdr-run.toml or .herdr-run.local.toml"
+
+
+def visible_lines(
+    messages: list[str], warnings: list[str], capacity: int
+) -> list[str]:
+    """Les lignes à afficher en pied de tableau, et ce qui n'y tient pas.
+
+    Une action porte sur une sélection : n'en montrer qu'une ligne cacherait la
+    plupart des « skipped » d'un lot. Quand tout ne tient pas, la dernière ligne
+    compte le reste plutôt que de le taire.
+    """
+    lines = list(messages or warnings)
+    if not lines or capacity <= 0:
+        return []
+    if len(lines) <= capacity:
+        return lines
+    kept = lines[: capacity - 1]
+    kept.append(f"(+{len(lines) - len(kept)} more)")
+    return kept
 
 
 def footer_text(mode: str) -> str:
@@ -29,8 +82,8 @@ def footer_text(mode: str) -> str:
 
     Le mode vue n'offre aucune touche destructrice : c'est d'abord un affichage.
     Il n'y a pas non plus de touche « focus » — Herdr 0.8.2 n'expose aucun moyen
-    de donner le focus à un pane arbitraire par son identifiant, l'utilisateur
-    navigue avec le préfixe Herdr.
+    de donner le focus à un pane arbitraire par son identifiant. Reste le
+    préfixe Herdr, dont on n'a pas vérifié qu'un TUI curses le laisse passer.
     """
     if mode == MODE_EDIT:
         return "EDIT  space select  enter start  s stop  r restart  x close  esc cancel"
@@ -48,6 +101,7 @@ class Dashboard:
         self.checked: set[str] = set()
         self.warnings: list[str] = list(warnings)
         self.messages: list[str] = []
+        self.messages_at: float = 0.0
         self.views: list[ServiceView] = []
 
     def names(self) -> list[str]:
@@ -72,12 +126,37 @@ class Dashboard:
         if self.cursor >= len(self.views):
             self.cursor = max(0, len(self.views) - 1)
 
+    def set_messages(self, messages: list[str]) -> None:
+        """Pose les messages d'action et l'instant de leur affichage."""
+        self.messages = list(messages)
+        self.messages_at = time.monotonic()
+
+    def expire_messages(self, now: float) -> None:
+        """Efface les messages d'action périmés."""
+        if self.messages and now - self.messages_at >= MESSAGE_SECONDS:
+            self.messages = []
+
+    def tick(self) -> None:
+        """Rafraîchit sans laisser une panne de Herdr emporter le pane.
+
+        Un appel qui échoue — serveur qui redémarre, pane fermé entre deux
+        commandes — ne doit pas dérouler la pile jusqu'à la sortie du TUI : la
+        promesse du tableau de bord est d'être un pane qu'on laisse ouvert. Les
+        vues précédentes restent affichées, périmées mais lisibles.
+        """
+        try:
+            self.refresh()
+        except RuntimeError as error:
+            self.set_messages([str(error)])
+
     def act(self, action: str) -> None:
         selected = resolve_selection(self.names(), self.checked, self.cursor_name())
         chosen = [view for view in self.views if view.target.name in selected]
         state = load_state()
         tab = state.setdefault(self.tab_id, TabRecord())
-        self.messages = apply_action(action, chosen, tab, self.repo_root, herdr, self.tab_id)
+        self.set_messages(
+            apply_action(action, chosen, tab, self.repo_root, herdr, self.tab_id)
+        )
         save_state(state)
         self.checked.clear()
         self.mode = MODE_VIEW
@@ -92,22 +171,30 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
 
     while True:
         now = time.monotonic()
+        dashboard.expire_messages(now)
         if now - last_refresh >= REFRESH_SECONDS:
-            dashboard.refresh()
+            dashboard.tick()
             last_refresh = now
 
         stdscr.erase()
         height, width = stdscr.getmaxyx()
         if height < 4 or width < 30:
-            stdscr.addstr(0, 0, "Terminal too small"[: max(0, width - 1)])
+            # Le clavier est lu ici aussi : un pane trop étroit qui ignore
+            # toutes les touches ne peut plus être fermé de l'intérieur, et
+            # une poignée de divider suffit à l'y réduire.
+            stdscr.addstr(0, 0, SMALL_SCREEN_TEXT[: max(0, width - 1)])
             stdscr.refresh()
-            time.sleep(0.2)
+            key = stdscr.getch()
+            if key == ord("q"):
+                return
+            if key == -1:
+                time.sleep(0.05)
             continue
 
-        stdscr.addstr(0, 0, "RUN TARGETS"[: width - 1], curses.A_BOLD)
-        for index, view in enumerate(dashboard.views):
-            if index + 2 >= height - 2:
-                break
+        stdscr.addstr(0, 0, header_text(dashboard.repo_root)[: width - 1], curses.A_BOLD)
+        rows_capacity = max(0, height - 4)
+        used = 0
+        for index, view in enumerate(dashboard.views[:rows_capacity]):
             row = format_row(
                 view,
                 checked=view.target.name in dashboard.checked,
@@ -115,13 +202,17 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
                 mode=dashboard.mode,
             )
             stdscr.addstr(index + 2, 0, row[: width - 1])
+            used = index + 1
 
-        if not dashboard.views:
-            stdscr.addstr(2, 0, "No targets. Add .herdr-run.toml or .herdr-run.local.toml"[: width - 1])
+        if not dashboard.views and rows_capacity > 0:
+            stdscr.addstr(2, 0, empty_text(dashboard.repo_root)[: width - 1])
+            used = 1
 
-        footer_message = dashboard.messages or dashboard.warnings
-        if footer_message:
-            stdscr.addstr(height - 2, 0, footer_message[0][: width - 1])
+        lines = visible_lines(
+            dashboard.messages, dashboard.warnings, max(0, height - 3 - used)
+        )
+        for offset, line in enumerate(lines):
+            stdscr.addstr(height - 1 - len(lines) + offset, 0, line[: width - 1])
         attribute = curses.A_REVERSE if dashboard.mode == MODE_EDIT else curses.A_DIM
         stdscr.addstr(height - 1, 0, footer_text(dashboard.mode)[: width - 1], attribute)
         stdscr.refresh()

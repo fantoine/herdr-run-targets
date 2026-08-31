@@ -30,7 +30,15 @@ from run_targets.services import (
 )
 from run_targets.config import Target
 from run_targets.state import ServiceRecord, TabRecord
-from run_targets.tui import MODE_EDIT, MODE_VIEW, footer_text, format_row
+from run_targets.tui import (
+    MODE_EDIT,
+    MODE_VIEW,
+    empty_text,
+    footer_text,
+    format_row,
+    header_text,
+    visible_lines,
+)
 
 
 def no_sleep():
@@ -407,25 +415,84 @@ class FormatRowTest(unittest.TestCase):
         row = format_row(self._view(), checked=False, cursor=True, mode=MODE_VIEW)
         self.assertTrue(row.startswith(">"))
 
-    def test_a_local_target_is_labelled(self):
+    def test_a_local_target_is_marked(self):
         row = format_row(self._view(origin="local"), checked=False, cursor=False, mode=MODE_VIEW)
-        self.assertIn("local", row)
+        self.assertTrue(row.endswith("*"), row)
 
-    def test_a_team_target_carries_no_origin_label(self):
+    def test_a_team_target_carries_no_origin_marker(self):
         row = format_row(self._view(origin="team"), checked=False, cursor=False, mode=MODE_VIEW)
         self.assertNotIn("team", row)
+        self.assertNotIn("*", row)
+
+    def test_a_full_row_fits_the_narrowest_dashboard(self):
+        """30 colonnes est la largeur minimale du tableau ; au-delà, c'est le
+        marqueur d'origine qui disparaissait le premier."""
+        view = ServiceView(
+            target=Target("a-very-long-name", "cmd", cwd=None, env={}, origin="local"),
+            state=RUNNING,
+            pane_id="w1:p2",
+        )
+        row = format_row(view, checked=True, cursor=True, mode=MODE_EDIT)
+        self.assertLessEqual(len(row), 29)
+        self.assertTrue(row.endswith("*"), row)
+        self.assertIn("running", row)
+
+    def test_a_long_name_is_truncated_rather_than_pushing_the_columns(self):
+        view = ServiceView(
+            target=Target("abcdefghijklmnop", "cmd", cwd=None, env={}, origin="team"),
+            state=RUNNING,
+            pane_id="w1:p2",
+        )
+        row = format_row(view, checked=False, cursor=False, mode=MODE_VIEW)
+        self.assertIn("abcdefghijkl", row)
+        self.assertNotIn("abcdefghijklm", row)
 
 
 class FooterTextTest(unittest.TestCase):
     def test_view_mode_advertises_edit_and_quit(self):
-        text = footer_text(MODE_VIEW)
-        self.assertIn("e", text)
-        self.assertIn("q", text)
+        self.assertEqual(footer_text(MODE_VIEW), "VIEW  e edit  q close")
 
     def test_edit_mode_advertises_the_actions(self):
-        text = footer_text(MODE_EDIT)
-        for key in ("space", "enter", "s", "r", "x", "esc"):
-            self.assertIn(key, text)
+        self.assertEqual(
+            footer_text(MODE_EDIT),
+            "EDIT  space select  enter start  s stop  r restart  x close  esc cancel",
+        )
+
+
+class HeaderAndEmptyTextTest(unittest.TestCase):
+    """Un mauvais dépôt ne doit pas se lire comme un dépôt vide."""
+
+    def test_the_header_names_the_repository(self):
+        self.assertEqual(header_text("/home/me/projects/shop"), "RUN TARGETS  shop")
+
+    def test_the_header_ignores_a_trailing_separator(self):
+        self.assertEqual(header_text("/home/me/projects/shop/"), "RUN TARGETS  shop")
+
+    def test_the_empty_line_names_the_directory_it_looked_in(self):
+        self.assertEqual(
+            empty_text("/home/me/projects/shop"),
+            "No targets in shop. Add .herdr-run.toml or .herdr-run.local.toml",
+        )
+
+
+class VisibleLinesTest(unittest.TestCase):
+    def test_every_message_is_shown_when_they_all_fit(self):
+        self.assertEqual(visible_lines(["a", "b"], [], 3), ["a", "b"])
+
+    def test_the_overflow_is_counted_rather_than_hidden(self):
+        self.assertEqual(visible_lines(["a", "b", "c", "d"], [], 3), ["a", "b", "(+2 more)"])
+
+    def test_a_single_line_of_room_only_carries_the_count(self):
+        self.assertEqual(visible_lines(["a", "b"], [], 1), ["(+2 more)"])
+
+    def test_warnings_show_when_no_message_is_live(self):
+        self.assertEqual(visible_lines([], ["w1", "w2"], 5), ["w1", "w2"])
+
+    def test_messages_take_precedence_over_warnings(self):
+        self.assertEqual(visible_lines(["m"], ["w"], 5), ["m"])
+
+    def test_no_room_shows_nothing(self):
+        self.assertEqual(visible_lines(["a"], [], 0), [])
 
 
 class DashboardMessagesTest(unittest.TestCase):
@@ -460,6 +527,44 @@ class DashboardMessagesTest(unittest.TestCase):
                 dashboard.refresh()
             self.assertEqual(dashboard.messages, ["api: already stopped, stop skipped"])
             self.assertTrue(dashboard.warnings)
+
+    def test_action_messages_expire_so_warnings_come_back(self):
+        """Sans expiration, un seul « skipped » masquerait à jamais les
+        avertissements de configuration, qui sont eux permanents."""
+        from run_targets.tui import MESSAGE_SECONDS, Dashboard
+
+        dashboard = Dashboard(tab_id="w1:t1", repo_root="/repo", warnings=["boom"])
+        with patch("run_targets.tui.time.monotonic", return_value=100.0):
+            dashboard.set_messages(["api: already stopped, stop skipped"])
+        dashboard.expire_messages(100.0 + MESSAGE_SECONDS - 0.1)
+        self.assertTrue(dashboard.messages)
+        dashboard.expire_messages(100.0 + MESSAGE_SECONDS)
+        self.assertEqual(dashboard.messages, [])
+        self.assertEqual(dashboard.warnings, ["boom"])
+
+
+class DashboardTickTest(unittest.TestCase):
+    """Un appel Herdr en échec ne doit pas emporter le pane."""
+
+    def test_a_failing_refresh_keeps_the_previous_views_and_says_so(self):
+        import tempfile
+        from run_targets.tui import Dashboard
+
+        class Broken:
+            def panes_in_tab(self, tab_id):
+                raise RuntimeError("herdr pane list failed: socket closed")
+
+        with tempfile.TemporaryDirectory() as root:
+            dashboard = Dashboard(tab_id="w1:t1", repo_root=root, warnings=[])
+            previous = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+            dashboard.views = previous
+            with patch("run_targets.tui.herdr", Broken()), \
+                 patch.dict(os.environ, {"HERDR_PLUGIN_STATE_DIR": root}, clear=False):
+                dashboard.tick()
+            self.assertEqual(dashboard.views, previous)
+            self.assertEqual(
+                dashboard.messages, ["herdr pane list failed: socket closed"]
+            )
 
 
 if __name__ == "__main__":
