@@ -3,6 +3,7 @@ import io
 import os
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -234,6 +235,33 @@ class ToggleCreateCwdTest(unittest.TestCase):
         with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": context}, clear=False):
             args = self._run_create()
         self.assertNotIn("--cwd", args)
+
+
+MANIFEST_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "herdr-plugin.toml"
+)
+
+
+class ManifestCommandsTest(unittest.TestCase):
+    """Un script référencé par son seul nom dépend du répertoire courant du
+    process — exactement ce qui a tué le pane une fois `--cwd` pointé sur le
+    dépôt de l'utilisateur plutôt que sur celui du plugin. Chaque token qui a
+    l'air d'un script doit donc être absolu ou passer par $HERDR_PLUGIN_ROOT.
+    """
+
+    def test_no_command_references_a_bare_script_filename(self):
+        with open(MANIFEST_PATH, "rb") as handle:
+            manifest = tomllib.load(handle)
+        entries = manifest.get("actions", []) + manifest.get("panes", [])
+        self.assertTrue(entries, "manifest has no actions or panes to check")
+        for entry in entries:
+            command = entry.get("command", [])
+            for token in command:
+                if token.endswith(".py") or token.endswith(".sh"):
+                    self.assertTrue(
+                        token.startswith("/") or "$HERDR_PLUGIN_ROOT" in token,
+                        f"{entry.get('id')!r} command token {token!r} is a bare script path",
+                    )
 
 
 if __name__ == "__main__":

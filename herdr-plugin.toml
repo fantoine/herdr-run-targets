@@ -9,10 +9,10 @@ platforms = ["linux", "macos"]
 id = "toggle"
 title = "Run targets"
 contexts = ["workspace"]
-command = ["python3", "toggle.py"]
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/toggle.py\""]
 
 [[panes]]
 id = "dashboard"
 title = "Run targets"
 placement = "tab"
-command = ["python3", "dashboard.py"]
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/dashboard.py\""]
