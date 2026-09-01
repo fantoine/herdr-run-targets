@@ -1,7 +1,7 @@
-"""État des services et décision d'action.
+"""Service state and action decisions.
 
-Tout ce fichier est pur : il ne parle ni à Herdr ni au terminal, seulement à
-des valeurs. C'est ce qui rend la table d'idempotence vérifiable case par case.
+This whole file is pure: it speaks neither to Herdr nor to the terminal, only to
+values. That is what makes the idempotence table verifiable cell by cell.
 """
 
 from __future__ import annotations
@@ -28,26 +28,26 @@ OP_CLOSE = "close"
 OP_FORGET = "forget"
 OP_SKIP = "skip"
 
-# Attente d'un arrêt avant de relancer dans le même pane. Un serveur de
-# développement qui gère SIGINT met bien plus que le temps de livraison de la
-# touche à rendre la main ; taper la commande entre-temps la ferait avaler par
-# l'entrée standard du processus mourant, et le service resterait arrêté.
+# Wait for a stop before restarting in the same pane. A dev server that handles
+# SIGINT takes far longer to hand back control than the keystroke takes to
+# arrive; typing the command in the meantime would have it swallowed by the
+# dying process's standard input, and the service would stay stopped.
 STOP_POLL_SECONDS = 0.1
 STOP_POLL_ATTEMPTS = 30
 
-# Indirection pour que les tests n'attendent jamais réellement.
+# Indirection so the tests never actually wait.
 _sleep = time.sleep
 
 
 def derive_state(
     record: ServiceRecord | None, pane_alive: bool, foreground: bool
 ) -> str:
-    """L'état d'un service, croisant l'observation et ce que le plugin a demandé.
+    """A service's state, crossing observation with what the plugin asked for.
 
-    `process-info` dit seulement quel processus occupe le premier plan, jamais
-    pourquoi il est parti : un service qui se termine seul laisse exactement la
-    même trace qu'un ctrl+C. Seul `stop_requested`, que le plugin pose lui-même,
-    sépare `stopped` de `exited`.
+    `process-info` only says which process holds the foreground, never why it
+    left: a service that ends on its own leaves exactly the same trace as a
+    ctrl+C. Only `stop_requested`, which the plugin sets itself, separates
+    `stopped` from `exited`.
     """
     if record is None:
         return IDLE
@@ -73,8 +73,8 @@ _PLAN: dict[str, dict[str, str]] = {
         IDLE: OP_SKIP,
         GONE: OP_SKIP,
     },
-    # Redémarrer un service arrêté le démarre : l'état visé par un redémarrage
-    # est « en marche », l'ignorer irait contre l'intention.
+    # Restarting a stopped service starts it: the state a restart aims for is
+    # "running", and skipping it would work against that intent.
     "restart": {
         RUNNING: OP_RESTART,
         STOPPED: OP_START,
@@ -93,18 +93,18 @@ _PLAN: dict[str, dict[str, str]] = {
 
 
 def plan_action(action: str, state: str) -> str:
-    """L'opération à mener pour une action demandée sur un état donné."""
+    """The operation to carry out for a requested action on a given state."""
     return _PLAN.get(action, {}).get(state, OP_SKIP)
 
 
 def next_split_target(
     tab: TabRecord, live_pane_ids: set[str]
 ) -> tuple[str, str] | None:
-    """Le pane à splitter pour accueillir un nouveau service, et la direction.
+    """The pane to split to host a new service, and the direction.
 
-    Ne considère que des panes du journal. Un onglet neuf contient déjà le pane
-    docké de `herdr-sidebar` ; splitter « le dernier pane de l'onglet » l'a
-    coupé en deux pendant la sonde de conception.
+    Only considers panes from the journal. A fresh tab already holds
+    `herdr-sidebar`'s docked pane; splitting "the tab's last pane" cut it in two
+    during the design probe.
     """
     last = tab.last_service_pane_id
     if last is not None and last in live_pane_ids:
@@ -118,10 +118,10 @@ def next_split_target(
 def resolve_selection(
     names: Sequence[str], checked: set[str], cursor: str | None
 ) -> list[str]:
-    """Les targets visées : les cochées, sinon celle sous le curseur.
+    """The targets being acted on: the checked ones, else the one under the cursor.
 
-    Convention des gestionnaires de fichiers en TUI : on ne coche que pour agir
-    en lot, sinon on vise avec le curseur.
+    The convention of TUI file managers: you only check to act in bulk,
+    otherwise you aim with the cursor.
     """
     selected = [name for name in names if name in checked]
     if selected:
@@ -132,25 +132,26 @@ def resolve_selection(
 
 
 def restart_blocked_message(name: str) -> str:
-    """Le message d'un redémarrage abandonné faute d'arrêt.
+    """The message for a restart abandoned for want of a stop.
 
-    Ne rien dire laisserait croire à un redémarrage réussi, alors que le
-    service tourne encore avec son ancien code.
+    Saying nothing would suggest a successful restart, while the service is
+    still running its old code.
     """
     return f"{name}: still running after stop, restart skipped"
 
 
 def skip_message(name: str, action: str, state: str) -> str:
-    """Le message d'une action sans effet.
+    """The message for an action with no effect.
 
-    Une action ignorée en silence est indistinguable d'une touche non prise.
+    An action skipped silently is indistinguishable from a keystroke that never
+    registered.
     """
     return f"{name}: already {state}, {action} skipped"
 
 
 @dataclass
 class ServiceView:
-    """Une target et ce qu'on observe d'elle en ce moment."""
+    """A target and what we observe of it right now."""
 
     target: Target
     state: str
@@ -160,10 +161,10 @@ class ServiceView:
 def observe(
     tab: TabRecord, targets: Sequence[Target], client, tab_id: str
 ) -> list[ServiceView]:
-    """Recalcule l'état de chaque target depuis Herdr.
+    """Recompute each target's state from Herdr.
 
-    L'état n'est jamais lu depuis le journal seul : celui-ci dit quels panes
-    appartiennent au plugin, l'observation dit ce qui s'y passe.
+    State is never read from the journal alone: the journal says which panes
+    belong to the plugin, observation says what happens in them.
     """
     live = set(client.panes_in_tab(tab_id))
     views: list[ServiceView] = []
@@ -184,10 +185,10 @@ def observe(
 
 
 def _start_in_pane(tab: TabRecord, view: ServiceView, pane_id: str, client) -> None:
-    # Le pane est enregistré avant le lancement : si `pane_run` échoue, le service
-    # reste associé à son pane plutôt que de laisser un pane vivant qu'aucune
-    # entrée du journal ne réclame — un « start » suivant le réutiliserait, là où
-    # un pane orphelin ferait splitter un pane de plus à chaque tentative.
+    # The pane is recorded before the launch: if `pane_run` fails, the service
+    # stays associated with its pane rather than leaving a live pane no journal
+    # entry claims -- a later "start" would reuse it, where an orphaned pane
+    # would split one more pane on every attempt.
     tab.services[view.target.name] = ServiceRecord(pane_id=pane_id, stop_requested=False)
     client.pane_run(pane_id, view.target.command)
 
@@ -206,10 +207,10 @@ def _create_and_start(
         pane_id, direction, ratio=ratio, cwd=cwd, env=view.target.env or None
     )
     tab.last_service_pane_id = new_pane
-    # Le pane porte le nom de sa target : dans une colonne de services, un titre
-    # de terminal générique ne dit rien de ce qui tourne là. Le renommage
-    # précède le lancement, sinon la commande poserait son propre titre.
-    # Un échec ici ne doit pas empêcher le service de démarrer.
+    # The pane carries its target's name: in a column of services, a generic
+    # terminal title says nothing about what runs there. The rename comes before
+    # the launch, otherwise the command would set a title of its own.
+    # A failure here must not keep the service from starting.
     try:
         client.pane_rename(new_pane, view.target.name)
     except RuntimeError:
@@ -218,11 +219,11 @@ def _create_and_start(
 
 
 def _wait_until_stopped(pane_id: str, client) -> bool:
-    """Sonde le premier plan du pane jusqu'à ce qu'il se libère.
+    """Poll the pane's foreground until it frees up.
 
-    Rend vrai dès que plus rien n'occupe le pane, faux si le budget d'attente
-    expire. Le budget est borné : un service qui refuse de mourir ne doit pas
-    figer le tableau de bord.
+    Returns true as soon as nothing occupies the pane, false if the waiting
+    budget runs out. The budget is bounded: a service that refuses to die must
+    not freeze the dashboard.
     """
     for _ in range(STOP_POLL_ATTEMPTS):
         if not client.has_foreground_command(client.process_info(pane_id)):
@@ -232,7 +233,7 @@ def _wait_until_stopped(pane_id: str, client) -> bool:
 
 
 def _forget(tab: TabRecord, name: str) -> None:
-    """Retire un service du journal, en gardant `last_service_pane_id` cohérent."""
+    """Drop a service from the journal, keeping `last_service_pane_id` coherent."""
     record = tab.services.pop(name, None)
     if record is not None and tab.last_service_pane_id == record.pane_id:
         remaining = [service.pane_id for service in tab.services.values()]
@@ -247,10 +248,10 @@ def apply_action(
     client,
     tab_id: str,
 ) -> list[str]:
-    """Applique une action à une sélection, et rend les messages à afficher.
+    """Apply an action to a selection, and return the messages to display.
 
-    Une target en échec n'interrompt pas les suivantes : un lot à moitié lancé
-    vaut mieux qu'un lot abandonné à la première erreur.
+    One failing target does not stop the ones after it: a half-started batch
+    beats a batch abandoned on the first error.
     """
     messages: list[str] = []
     for view in views:

@@ -59,7 +59,7 @@ class DescribeHerdrFailureTest(unittest.TestCase):
 
 
 class SplitArgsTest(unittest.TestCase):
-    """La ligne de commande d'un split, sans lancer Herdr."""
+    """A split's command line, without running Herdr."""
 
     def test_minimal_split(self):
         self.assertEqual(
@@ -124,7 +124,7 @@ class PaneSplitTest(unittest.TestCase):
             self.assertEqual(pane_split("w4:p5", "right"), "w4:p7")
 
     def test_the_returned_id_is_not_derived_from_the_source(self):
-        """Splitter w4:p5 rend w4:p7 sur Herdr 0.8.2 : les ids ne se suivent pas."""
+        """Splitting w4:p5 returned w4:p7 on Herdr 0.8.2: ids do not run in sequence."""
         with patch("run_targets.herdr.herdr_result", return_value={"pane": {"pane_id": "w9:p42"}}):
             self.assertEqual(pane_split("w4:p5", "down"), "w9:p42")
 
@@ -165,7 +165,7 @@ class PanesInTabTest(unittest.TestCase):
 
 
 class RenameArgsTest(unittest.TestCase):
-    """Les deux renommages passent par `herdr_call`, sans contrat JSON."""
+    """Both renames go through `herdr_call`, with no JSON contract."""
 
     def test_pane_rename_sends_the_label(self):
         with patch("run_targets.herdr.herdr_call", return_value="") as call:

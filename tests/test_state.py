@@ -119,8 +119,8 @@ class DecideToggleTest(unittest.TestCase):
         )
 
     def test_a_tab_without_any_live_service_is_closed_whole(self):
-        """Fermer le seul pane laisserait un onglet que ni « rouvrir » ni
-        « fermer » ne reconnaîtrait : la bascule suivante en créerait un autre."""
+        """Closing the only pane would leave a tab that neither "reopen" nor
+        "close" would recognise: the next toggle would create another."""
         state = {"w1:t1": TabRecord(control_pane_id="w1:p1")}
         self.assertEqual(decide_toggle(state, {"w1:p1": {}}), ("close_tab", "w1:t1"))
 
@@ -151,7 +151,7 @@ class DecideToggleTest(unittest.TestCase):
 
 
 class ToggleCloseTest(unittest.TestCase):
-    """Ce que la bascule a créé, elle le retire — onglet compris."""
+    """What the toggle created, it takes away -- the tab included."""
 
     def _run(self, state, panes):
         import toggle as toggle_module
@@ -212,7 +212,7 @@ class LiveServicePaneTest(unittest.TestCase):
 
 
 class ToggleReopenArgsTest(unittest.TestCase):
-    """La réouverture doit passer un pane source au split, sinon Herdr n'a rien à couper."""
+    """Reopening must pass a source pane to the split, or Herdr has nothing to cut."""
 
     def test_the_reopen_call_carries_the_live_service_pane(self):
         import toggle as toggle_module
@@ -258,7 +258,7 @@ class ToggleReopenArgsTest(unittest.TestCase):
 
 
 class ToggleCreateCwdTest(unittest.TestCase):
-    """La création n'a aucun pane à hériter : le répertoire vient du contexte de l'action."""
+    """Creation has no pane to inherit from: the directory comes from the action context."""
 
     def _run_create(self):
         import toggle as toggle_module
@@ -302,8 +302,8 @@ class ToggleCreateCwdTest(unittest.TestCase):
 
 
 class DashboardStartupTest(unittest.TestCase):
-    """Le pane de tableau de bord ne doit jamais mourir sur une trace brute :
-    Herdr le retire aussitôt et l'utilisateur ne lit rien."""
+    """The dashboard pane must never die on a raw traceback:
+    Herdr tears it down at once and the user reads nothing."""
 
     def test_a_missing_git_is_reported_instead_of_raising(self):
         import dashboard as dashboard_module
@@ -323,10 +323,10 @@ MANIFEST_PATH = os.path.join(
 
 
 class ManifestCommandsTest(unittest.TestCase):
-    """Un script référencé par son seul nom dépend du répertoire courant du
-    process — exactement ce qui a tué le pane une fois `--cwd` pointé sur le
-    dépôt de l'utilisateur plutôt que sur celui du plugin. Chaque token qui a
-    l'air d'un script doit donc être absolu ou passer par $HERDR_PLUGIN_ROOT.
+    """A script referenced by name alone depends on the process's current
+    directory -- exactly what killed the pane once `--cwd` pointed at the
+    user's repository rather than the plugin's. Every token that looks like a
+    script must therefore be absolute or go through $HERDR_PLUGIN_ROOT.
     """
 
     def test_no_command_references_a_bare_script_filename(self):
@@ -345,7 +345,7 @@ class ManifestCommandsTest(unittest.TestCase):
 
 
 class TabLabelTest(unittest.TestCase):
-    """L'onglet ne se nomme que lorsque le plugin l'a créé lui-même."""
+    """The tab is only named when the plugin created it itself."""
 
     def test_the_create_call_marks_the_tab_as_ours(self):
         import toggle as toggle_module
@@ -390,8 +390,8 @@ def pane(pane_id, workspace_id, tab_id="w1:t1"):
 
 
 class TabWorkspaceIdTest(unittest.TestCase):
-    """Le workspace d'un onglet se déduit des panes vivants : aucun champ à
-    ajouter au journal, et les journaux existants restent lisibles."""
+    """A tab's workspace is inferred from its live panes: no field to add to the
+    journal, and existing journals stay readable."""
 
     def test_reads_it_from_the_control_pane(self):
         record = TabRecord(control_pane_id="w2:p1")
@@ -408,8 +408,8 @@ class TabWorkspaceIdTest(unittest.TestCase):
 
 
 class DecideToggleScopeTest(unittest.TestCase):
-    """La bascule ne doit agir que sur le workspace courant : sans ce filtre
-    elle ferme le tableau de bord d'un autre worktree."""
+    """The toggle must act on the current workspace only: without this filter it
+    closes the dashboard of another worktree."""
 
     def test_ignores_a_dashboard_in_another_workspace(self):
         state = {"w2:t1": TabRecord(control_pane_id="w2:p1")}
@@ -439,7 +439,7 @@ class DecideToggleScopeTest(unittest.TestCase):
         self.assertEqual(decide_toggle(state, live, "w2"), ("reopen", "w2:t1"))
 
     def test_an_unknown_workspace_falls_back_to_the_old_behaviour(self):
-        """Mieux vaut agir sur un onglet suivi que ne rien faire du tout."""
+        """Acting on a tracked tab beats doing nothing at all."""
         state = {"w2:t1": TabRecord(control_pane_id="w2:p1")}
         live = {"w2:p1": pane("w2:p1", "w2", "w2:t1")}
         self.assertEqual(decide_toggle(state, live, None), ("close_tab", "w2:t1"))
@@ -465,11 +465,11 @@ class CurrentWorkspaceIdTest(unittest.TestCase):
 
 
 class RegisterControlPaneTest(unittest.TestCase):
-    """Deux tableaux de bord qui démarrent ensemble ne doivent pas s'effacer.
+    """Two dashboards starting together must not erase each other.
 
-    Chacun lisait, modifiait puis réécrivait le journal entier ; le second
-    écrasait l'entrée du premier. Observé en vrai : l'entrée d'un workspace a
-    disparu, et sa bascule ne reconnaissait plus rien.
+    Each read, modified, then rewrote the whole journal; the second one
+    overwrote the first one's entry. Seen for real: a workspace's entry
+    vanished, and its toggle recognised nothing any more.
     """
 
     def test_registering_keeps_the_other_tabs(self):
@@ -497,8 +497,8 @@ class RegisterControlPaneTest(unittest.TestCase):
 
 
 class ToggleCreateWorkspaceTest(unittest.TestCase):
-    """L'onglet créé doit naître dans le workspace d'où l'on invoque, pas dans
-    celui qui a le focus."""
+    """The created tab must be born in the workspace it was invoked from, not in
+    the focused one."""
 
     def test_the_create_call_carries_the_workspace(self):
         import toggle as toggle_module
@@ -520,8 +520,8 @@ class ToggleCreateWorkspaceTest(unittest.TestCase):
         self.assertIn("w7", captured["args"])
 
     def test_no_workspace_flag_when_the_workspace_no_longer_exists(self):
-        """Fermer le dernier onglet d'un workspace ferme le workspace : l'id
-        courant peut donc être périmé au moment où l'on recrée."""
+        """Closing a workspace's last tab closes the workspace: the current id
+        can therefore be stale by the time we recreate."""
         import toggle as toggle_module
 
         captured = {}
@@ -530,7 +530,7 @@ class ToggleCreateWorkspaceTest(unittest.TestCase):
             captured["args"] = list(args)
             return {}
 
-        # Aucun pane vivant dans w7 : le workspace a disparu.
+        # No live pane in w7: the workspace is gone.
         panes = [{"pane_id": "w9:p1", "workspace_id": "w9", "tab_id": "w9:t1"}]
         with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
              patch.object(toggle_module.herdr, "herdr_result", fake_result), \

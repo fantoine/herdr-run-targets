@@ -226,8 +226,8 @@ class ResolveRepoRootTest(unittest.TestCase):
             self.assertIsNone(resolve_repo_root(root))
 
     def test_a_missing_git_degrades_to_none(self):
-        """Sans ce garde-fou, `git` absent remonte une FileNotFoundError avant
-        même le test du code de retour, et le pane meurt sur une trace."""
+        """Without this guard, a missing `git` raises FileNotFoundError before
+        the return code is even checked, and the pane dies on a traceback."""
         with unittest.mock.patch(
             "run_targets.config.subprocess.run", side_effect=FileNotFoundError("git")
         ):
