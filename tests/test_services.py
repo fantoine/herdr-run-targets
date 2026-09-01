@@ -31,6 +31,7 @@ from run_targets.services import (
 from run_targets.config import Target
 from run_targets.state import ServiceRecord, TabRecord
 from run_targets.tui import (
+    footer_lines,
     MODE_EDIT,
     MODE_VIEW,
     empty_text,
@@ -634,6 +635,40 @@ class ServicePaneNamingTest(unittest.TestCase):
         views = [ServiceView(target=target("api"), state=STOPPED, pane_id="w1:p2")]
         apply_action("start", views, tab, "/repo", client, "w1:t1")
         self.assertNotIn("rename", [c[0] for c in client.calls])
+
+
+class FooterLinesTest(unittest.TestCase):
+    """Le pied de page se replie plutôt que de tronquer : une touche cachée
+    est une touche qui n'existe pas pour l'utilisateur."""
+
+    def test_a_wide_pane_keeps_one_line(self):
+        lines = footer_lines(MODE_EDIT, 100)
+        self.assertEqual(lines, [footer_text(MODE_EDIT)])
+
+    def test_a_narrow_pane_wraps_without_losing_a_key(self):
+        lines = footer_lines(MODE_EDIT, 34)
+        self.assertGreater(len(lines), 1)
+        joined = " ".join(lines)
+        for key in ("space", "enter", "s stop", "r restart", "x close", "esc"):
+            self.assertIn(key, joined)
+
+    def test_no_line_exceeds_the_width(self):
+        for width in (30, 34, 40, 55, 71):
+            for line in footer_lines(MODE_EDIT, width):
+                self.assertLessEqual(len(line), width, f"largeur {width}: {line!r}")
+
+    def test_a_segment_is_never_split_across_lines(self):
+        for line in footer_lines(MODE_EDIT, 30):
+            self.assertFalse(line.startswith(" "))
+            self.assertFalse(line.endswith(" "))
+
+    def test_view_mode_still_fits_on_one_line(self):
+        self.assertEqual(footer_lines(MODE_VIEW, 34), [footer_text(MODE_VIEW)])
+
+    def test_an_absurdly_narrow_width_still_yields_every_segment(self):
+        joined = " ".join(footer_lines(MODE_EDIT, 8))
+        for key in ("space", "x close", "esc"):
+            self.assertIn(key, joined)
 
 
 if __name__ == "__main__":

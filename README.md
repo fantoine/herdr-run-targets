@@ -94,6 +94,12 @@ and it also works while the pane is too narrow to draw the table.
 | `x` | close the pane |
 | `esc` | cancel: uncheck everything, back to view mode |
 
+The edit-mode legend wraps onto as many lines as the pane's width needs, so no
+key is ever hidden by truncation. In a narrow pane that costs two extra rows
+while you are in edit mode; below about six rows of height the legend crowds the
+service list out entirely, which is the point at which the pane wants resizing
+anyway.
+
 Actions apply to every checked row. With nothing checked, they apply to the row
 under the cursor. After an action the dashboard returns to view mode and clears
 the selection, so a stray second keypress cannot replay a batch.
