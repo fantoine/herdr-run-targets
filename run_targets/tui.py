@@ -85,9 +85,49 @@ def footer_text(mode: str) -> str:
     de donner le focus à un pane arbitraire par son identifiant. Reste le
     préfixe Herdr, dont on n'a pas vérifié qu'un TUI curses le laisse passer.
     """
+    return "  ".join(footer_segments(mode))
+
+
+def footer_segments(mode: str) -> list[str]:
+    """Les éléments du pied de page, insécables.
+
+    Les garder séparés permet de replier la barre sans jamais couper une
+    touche en deux.
+    """
     if mode == MODE_EDIT:
-        return "EDIT  space select  enter start  s stop  r restart  x close  esc cancel"
-    return "VIEW  e edit  q close"
+        return [
+            "EDIT",
+            "space select",
+            "enter start",
+            "s stop",
+            "r restart",
+            "x close",
+            "esc cancel",
+        ]
+    return ["VIEW", "e edit", "q close"]
+
+
+def footer_lines(mode: str, width: int) -> list[str]:
+    """Replie le pied de page sur autant de lignes que la largeur l'impose.
+
+    Tronquer cachait `s stop`, `r restart` et `x close` dès qu'un service
+    partageait l'onglet : une touche invisible n'existe pas pour qui s'en sert.
+    Un élément plus large que le pane occupe sa ligne seul plutôt que d'être
+    coupé — il dépassera, mais restera identifiable.
+    """
+    lines: list[str] = []
+    current = ""
+    for segment in footer_segments(mode):
+        if not current:
+            current = segment
+        elif len(current) + 2 + len(segment) <= width:
+            current = f"{current}  {segment}"
+        else:
+            lines.append(current)
+            current = segment
+    if current:
+        lines.append(current)
+    return lines
 
 
 class Dashboard:
@@ -198,7 +238,10 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             continue
 
         stdscr.addstr(0, 0, header_text(dashboard.repo_root)[: width - 1], curses.A_BOLD)
-        rows_capacity = max(0, height - 4)
+        # Le pied de page peut occuper plusieurs lignes en mode édition ;
+        # les rangées de services ne doivent pas empiéter dessus.
+        footer_height = len(footer_lines(dashboard.mode, max(1, width - 1)))
+        rows_capacity = max(0, height - 3 - footer_height)
         used = 0
         for index, view in enumerate(dashboard.views[:rows_capacity]):
             row = format_row(
@@ -214,13 +257,16 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             stdscr.addstr(2, 0, empty_text(dashboard.repo_root)[: width - 1])
             used = 1
 
+        footer = footer_lines(dashboard.mode, max(1, width - 1))
+        footer_top = height - len(footer)
         lines = visible_lines(
-            dashboard.messages, dashboard.warnings, max(0, height - 3 - used)
+            dashboard.messages, dashboard.warnings, max(0, footer_top - 2 - used)
         )
         for offset, line in enumerate(lines):
-            stdscr.addstr(height - 1 - len(lines) + offset, 0, line[: width - 1])
+            stdscr.addstr(footer_top - len(lines) + offset, 0, line[: width - 1])
         attribute = curses.A_REVERSE if dashboard.mode == MODE_EDIT else curses.A_DIM
-        stdscr.addstr(height - 1, 0, footer_text(dashboard.mode)[: width - 1], attribute)
+        for offset, line in enumerate(footer):
+            stdscr.addstr(footer_top + offset, 0, line[: width - 1], attribute)
         stdscr.refresh()
 
         key = stdscr.getch()
