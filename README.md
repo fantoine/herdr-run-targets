@@ -110,10 +110,6 @@ command = "fantoine.run-targets.toggle"
 description = "Run targets"
 ```
 
-Pick a key Herdr does not already use. `prefix+shift+s` is free; `prefix+shift+t`
-is `rename_tab`, `prefix+shift+r` is `reload_config` and `prefix+shift+d` is
-`close_workspace`, so binding those shadows a built-in.
-
 ## 🚀 Getting started
 
 ### Declare your targets
