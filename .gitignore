@@ -1,3 +1,6 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Documents de conception, gardés en local hors du dépôt public.
+docs/

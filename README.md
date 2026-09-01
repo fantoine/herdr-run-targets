@@ -19,7 +19,13 @@ repository: give it the same trust you give a `Makefile` in a fresh clone.
 ## Install
 
 ```bash
-git clone <this-repository>
+herdr plugin install fantoine/herdr-run-targets
+```
+
+Or, to work on it locally:
+
+```bash
+git clone https://github.com/fantoine/herdr-run-targets
 herdr plugin link ./herdr-run-targets
 ```
 
@@ -27,11 +33,15 @@ Bind a key in `~/.config/herdr/config.toml`, then run `herdr server reload-confi
 
 ```toml
 [[keys.command]]
-key = "prefix+shift+t"
+key = "prefix+shift+s"
 type = "plugin_action"
 command = "fantoine.run-targets.toggle"
 description = "Run targets"
 ```
+
+Pick a key Herdr does not already use. `prefix+shift+s` is free; `prefix+shift+t`
+is `rename_tab`, `prefix+shift+r` is `reload_config` and `prefix+shift+d` is
+`close_workspace`, so binding those shadows a built-in.
 
 ## Configuration
 
@@ -196,3 +206,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 Standard library only; nothing to install.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
