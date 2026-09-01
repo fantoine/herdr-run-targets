@@ -2,5 +2,5 @@
 __pycache__/
 *.pyc
 
-# Documents de conception, gardés en local hors du dépôt public.
+# Design documents, kept locally, outside the public repository.
 docs/
