@@ -162,11 +162,20 @@ feed its stdin — and you get `api: still running after stop, restart skipped`.
 your tabs — `herdr-sidebar` docks one in every new tab — and they are never
 split, stopped or closed by this one.
 
+**The toggle only ever acts on the workspace you invoke it from.** The plugin
+keeps one journal for every tab it tracks, so without that scope a keypress in
+one worktree would close the dashboard of another — which is exactly what it did
+before this was fixed. A tab created by the toggle is born in the invoking
+workspace too, unless that workspace has meanwhile disappeared, in which case it
+falls back to the focused one rather than failing.
+
 **Toggling the dashboard off closes the tab when nothing is running there.**
 With at least one service pane alive, the toggle removes only the dashboard pane
 and reopens it in place next time. With none, it closes the whole tab and forgets
 it, so repeated toggles never pile up orphan tabs. It only ever closes a tab it
-recorded as its own.
+recorded as its own. Note that Herdr closes a workspace along with its last tab:
+if the dashboard's tab is the only one there, toggling off closes the workspace
+too.
 
 **The column is narrow, and stays narrow.** Service panes are stacked by
 successive splits, so heights halve rather than divide evenly: past two or three

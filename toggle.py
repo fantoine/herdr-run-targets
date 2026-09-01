@@ -24,8 +24,44 @@ def live_service_pane(record: TabRecord, live_panes: dict[str, dict]) -> str | N
     return None
 
 
+def tab_workspace_id(record: TabRecord, live_panes: dict[str, dict]) -> str | None:
+    """Le workspace d'un onglet suivi, déduit de ses panes encore vivants.
+
+    Le déduire plutôt que le stocker évite d'ajouter un champ au journal et
+    garde lisibles les journaux écrits par une version antérieure.
+    """
+    candidates = [record.control_pane_id]
+    candidates += [service.pane_id for service in record.services.values()]
+    for pane_id in candidates:
+        pane = live_panes.get(pane_id) if pane_id else None
+        if isinstance(pane, dict) and isinstance(pane.get("workspace_id"), str):
+            return pane["workspace_id"]
+    return None
+
+
+def current_workspace_id() -> str | None:
+    """Le workspace depuis lequel l'action est invoquée.
+
+    Herdr injecte `HERDR_WORKSPACE_ID` dans chaque commande de plugin ; le
+    contexte de l'action porte la même information et sert de repli.
+    """
+    from_env = os.environ.get("HERDR_WORKSPACE_ID")
+    if from_env:
+        return from_env
+    try:
+        payload = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    workspace_id = payload.get("workspace_id")
+    return workspace_id if isinstance(workspace_id, str) and workspace_id else None
+
+
 def decide_toggle(
-    state: dict[str, TabRecord], live_panes: dict[str, dict]
+    state: dict[str, TabRecord],
+    live_panes: dict[str, dict],
+    workspace_id: str | None = None,
 ) -> tuple[str, str | None]:
     """Ce que `toggle` doit faire, au vu du journal et des panes vivants.
 
@@ -39,12 +75,28 @@ def decide_toggle(
     ni le cas « fermer » ne reconnaîtrait, et chaque bascule suivante en
     créerait un de plus. Ce que la bascule a créé, elle le retire.
     """
+
+    def ours(record: TabRecord) -> bool:
+        # Le journal est global : sans ce filtre, la bascule agit sur le premier
+        # onglet suivi venu, y compris dans un autre worktree — elle a déjà
+        # fermé le tableau de bord d'un workspace où l'utilisateur travaillait.
+        # Workspace inconnu : on retombe sur l'ancien comportement plutôt que
+        # de ne rien faire du tout.
+        if workspace_id is None:
+            return True
+        found = tab_workspace_id(record, live_panes)
+        return found is None or found == workspace_id
+
     for tab_id, record in state.items():
+        if not ours(record):
+            continue
         if record.control_pane_id and record.control_pane_id in live_panes:
             if live_service_pane(record, live_panes) is None:
                 return "close_tab", tab_id
             return "close", record.control_pane_id
     for tab_id, record in state.items():
+        if not ours(record):
+            continue
         if live_service_pane(record, live_panes) is not None:
             return "reopen", tab_id
     return "create", None
@@ -85,7 +137,8 @@ def main() -> int:
         return 1
 
     state = load_state()
-    decision, argument = decide_toggle(state, live_panes)
+    workspace_id = current_workspace_id()
+    decision, argument = decide_toggle(state, live_panes, workspace_id)
 
     try:
         if decision == "close":
@@ -132,6 +185,21 @@ def main() -> int:
                 "--placement", "tab",
                 "--env", f"{TAB_OWNED_ENV}=1",
             ]
+            # Sans cela l'onglet naît dans le workspace focalisé, qui n'est pas
+            # forcément celui d'où l'on invoque — incohérent avec la recherche,
+            # désormais restreinte au workspace courant.
+            # L'id n'est passé que si le workspace vit encore : fermer le
+            # dernier onglet d'un workspace ferme le workspace lui-même, donc
+            # l'id courant peut désigner quelque chose de disparu. Herdr
+            # répondrait `workspace_not_found` et la bascule échouerait au lieu
+            # de retomber sur le workspace focalisé.
+            live_workspaces = {
+                pane.get("workspace_id")
+                for pane in live_panes.values()
+                if isinstance(pane, dict)
+            }
+            if workspace_id is not None and workspace_id in live_workspaces:
+                open_args += ["--workspace", workspace_id]
             # Pas de pane de service pour hériter d'un répertoire : c'est le
             # contexte de l'action, injecté par Herdr, qui porte celui du
             # workspace de l'utilisateur.

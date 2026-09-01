@@ -120,6 +120,23 @@ def save_state(state: dict[str, TabRecord]) -> None:
         sys.stderr.write(f"Could not write the plugin state at {path}: {error}\n")
 
 
+def register_control_pane(tab_id: str, pane_id: str) -> None:
+    """Inscrit un pane de contrôle sans effacer les autres onglets.
+
+    Le journal est réécrit en entier à chaque sauvegarde. Deux tableaux de bord
+    qui démarrent au même instant lisaient donc tous deux l'état d'avant, et le
+    second réécrivait par-dessus l'entrée du premier — observé en vrai, une
+    entrée de workspace perdue et sa bascule qui ne reconnaissait plus rien.
+    Recharger juste avant d'écrire resserre la fenêtre à quelques
+    microsecondes ; seul un verrou l'éliminerait, ce que ne justifie pas un
+    plugin où deux tableaux de bord démarrent rarement ensemble.
+    """
+    state = load_state()
+    record = state.setdefault(tab_id, TabRecord())
+    record.control_pane_id = pane_id
+    save_state(state)
+
+
 def prune_state(
     state: dict[str, TabRecord], live_tab_ids: set[str]
 ) -> dict[str, TabRecord]:

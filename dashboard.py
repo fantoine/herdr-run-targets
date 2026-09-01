@@ -10,7 +10,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run_targets.config import resolve_repo_root
-from run_targets.state import TabRecord, load_state, prune_state, save_state
+from run_targets.state import (
+    TabRecord,
+    load_state,
+    prune_state,
+    register_control_pane,
+    save_state,
+)
 from run_targets.tui import Dashboard, run_dashboard
 from run_targets import TAB_LABEL, TAB_OWNED_ENV, herdr
 
@@ -37,9 +43,9 @@ def main() -> int:
         # Élaguer est une optimisation, pas une condition d'ouverture : un appel
         # Herdr en échec ne doit pas empêcher le tableau de bord de s'afficher.
         sys.stderr.write(f"Could not prune the plugin state: {error}\n")
-    record = state.setdefault(tab_id, TabRecord())
-    record.control_pane_id = pane_id
-    save_state(state)
+    # Rechargé juste avant l'écriture pour ne pas écraser un autre tableau de
+    # bord qui se serait inscrit entre-temps.
+    register_control_pane(tab_id, pane_id)
 
     # L'onglet ne se nomme que si nous l'avons créé : `toggle` pose la marque
     # sur ce seul chemin. Un échec de renommage est sans conséquence, le

@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from run_targets.state import (
+    register_control_pane,
     ServiceRecord,
     TabRecord,
     load_state,
@@ -17,7 +19,7 @@ from run_targets.state import (
     save_state,
     state_path,
 )
-from toggle import decide_toggle, live_service_pane
+from toggle import current_workspace_id, decide_toggle, tab_workspace_id, live_service_pane
 
 
 @contextlib.contextmanager
@@ -381,6 +383,179 @@ class TabLabelTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(toggle_module.main(), 0)
         self.assertNotIn(f"{toggle_module.TAB_OWNED_ENV}=1", captured["args"])
+
+
+def pane(pane_id, workspace_id, tab_id="w1:t1"):
+    return {"pane_id": pane_id, "workspace_id": workspace_id, "tab_id": tab_id}
+
+
+class TabWorkspaceIdTest(unittest.TestCase):
+    """Le workspace d'un onglet se déduit des panes vivants : aucun champ à
+    ajouter au journal, et les journaux existants restent lisibles."""
+
+    def test_reads_it_from_the_control_pane(self):
+        record = TabRecord(control_pane_id="w2:p1")
+        self.assertEqual(tab_workspace_id(record, {"w2:p1": pane("w2:p1", "w2")}), "w2")
+
+    def test_falls_back_to_a_service_pane(self):
+        record = TabRecord(control_pane_id="w2:p9", services={"api": ServiceRecord("w2:p3")})
+        live = {"w2:p3": pane("w2:p3", "w2")}
+        self.assertEqual(tab_workspace_id(record, live), "w2")
+
+    def test_returns_none_when_nothing_of_ours_is_alive(self):
+        record = TabRecord(control_pane_id="w2:p1")
+        self.assertIsNone(tab_workspace_id(record, {}))
+
+
+class DecideToggleScopeTest(unittest.TestCase):
+    """La bascule ne doit agir que sur le workspace courant : sans ce filtre
+    elle ferme le tableau de bord d'un autre worktree."""
+
+    def test_ignores_a_dashboard_in_another_workspace(self):
+        state = {"w2:t1": TabRecord(control_pane_id="w2:p1")}
+        live = {"w2:p1": pane("w2:p1", "w2", "w2:t1")}
+        self.assertEqual(decide_toggle(state, live, "w9"), ("create", None))
+
+    def test_closes_the_dashboard_of_the_current_workspace(self):
+        state = {"w2:t1": TabRecord(control_pane_id="w2:p1")}
+        live = {"w2:p1": pane("w2:p1", "w2", "w2:t1")}
+        self.assertEqual(decide_toggle(state, live, "w2"), ("close_tab", "w2:t1"))
+
+    def test_picks_the_current_workspace_among_several_tracked(self):
+        state = {
+            "w2:t1": TabRecord(control_pane_id="w2:p1"),
+            "w9:t1": TabRecord(control_pane_id="w9:p1"),
+        }
+        live = {
+            "w2:p1": pane("w2:p1", "w2", "w2:t1"),
+            "w9:p1": pane("w9:p1", "w9", "w9:t1"),
+        }
+        self.assertEqual(decide_toggle(state, live, "w9"), ("close_tab", "w9:t1"))
+
+    def test_reopen_is_scoped_too(self):
+        state = {"w2:t1": TabRecord(services={"api": ServiceRecord("w2:p3")})}
+        live = {"w2:p3": pane("w2:p3", "w2", "w2:t1")}
+        self.assertEqual(decide_toggle(state, live, "w9"), ("create", None))
+        self.assertEqual(decide_toggle(state, live, "w2"), ("reopen", "w2:t1"))
+
+    def test_an_unknown_workspace_falls_back_to_the_old_behaviour(self):
+        """Mieux vaut agir sur un onglet suivi que ne rien faire du tout."""
+        state = {"w2:t1": TabRecord(control_pane_id="w2:p1")}
+        live = {"w2:p1": pane("w2:p1", "w2", "w2:t1")}
+        self.assertEqual(decide_toggle(state, live, None), ("close_tab", "w2:t1"))
+
+
+class CurrentWorkspaceIdTest(unittest.TestCase):
+    def test_prefers_the_environment_variable(self):
+        with patch.dict(os.environ, {"HERDR_WORKSPACE_ID": "w7"}, clear=True):
+            self.assertEqual(current_workspace_id(), "w7")
+
+    def test_falls_back_to_the_action_context(self):
+        payload = json.dumps({"workspace_id": "w8"})
+        with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": payload}, clear=True):
+            self.assertEqual(current_workspace_id(), "w8")
+
+    def test_returns_none_without_either(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(current_workspace_id())
+
+    def test_invalid_context_json_is_not_fatal(self):
+        with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": "{broken"}, clear=True):
+            self.assertIsNone(current_workspace_id())
+
+
+class RegisterControlPaneTest(unittest.TestCase):
+    """Deux tableaux de bord qui démarrent ensemble ne doivent pas s'effacer.
+
+    Chacun lisait, modifiait puis réécrivait le journal entier ; le second
+    écrasait l'entrée du premier. Observé en vrai : l'entrée d'un workspace a
+    disparu, et sa bascule ne reconnaissait plus rien.
+    """
+
+    def test_registering_keeps_the_other_tabs(self):
+        with state_dir():
+            save_state({"w1:t1": TabRecord(control_pane_id="w1:p1")})
+            register_control_pane("w2:t1", "w2:p1")
+            loaded = load_state()
+            self.assertEqual(sorted(loaded), ["w1:t1", "w2:t1"])
+            self.assertEqual(loaded["w1:t1"].control_pane_id, "w1:p1")
+            self.assertEqual(loaded["w2:t1"].control_pane_id, "w2:p1")
+
+    def test_registering_preserves_the_services_of_its_own_tab(self):
+        with state_dir():
+            save_state({"w1:t1": TabRecord(control_pane_id="w1:pOld",
+                                           services={"api": ServiceRecord("w1:p9")})})
+            register_control_pane("w1:t1", "w1:pNew")
+            record = load_state()["w1:t1"]
+            self.assertEqual(record.control_pane_id, "w1:pNew")
+            self.assertEqual(record.services["api"].pane_id, "w1:p9")
+
+    def test_registering_into_an_empty_journal_creates_the_entry(self):
+        with state_dir():
+            register_control_pane("w1:t1", "w1:p1")
+            self.assertEqual(load_state()["w1:t1"].control_pane_id, "w1:p1")
+
+
+class ToggleCreateWorkspaceTest(unittest.TestCase):
+    """L'onglet créé doit naître dans le workspace d'où l'on invoque, pas dans
+    celui qui a le focus."""
+
+    def test_the_create_call_carries_the_workspace(self):
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        panes = [{"pane_id": "w7:p1", "workspace_id": "w7", "tab_id": "w7:t1"}]
+        with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value={}), \
+             patch.dict(os.environ, {"HERDR_WORKSPACE_ID": "w7"}, clear=True):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(toggle_module.main(), 0)
+        self.assertIn("--workspace", captured["args"])
+        self.assertIn("w7", captured["args"])
+
+    def test_no_workspace_flag_when_the_workspace_no_longer_exists(self):
+        """Fermer le dernier onglet d'un workspace ferme le workspace : l'id
+        courant peut donc être périmé au moment où l'on recrée."""
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        # Aucun pane vivant dans w7 : le workspace a disparu.
+        panes = [{"pane_id": "w9:p1", "workspace_id": "w9", "tab_id": "w9:t1"}]
+        with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value={}), \
+             patch.dict(os.environ, {"HERDR_WORKSPACE_ID": "w7"}, clear=True):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(toggle_module.main(), 0)
+        self.assertNotIn("--workspace", captured["args"])
+
+    def test_no_workspace_flag_when_the_workspace_is_unknown(self):
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        with patch.object(toggle_module.herdr, "list_panes", return_value=[]), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value={}), \
+             patch.dict(os.environ, {}, clear=True):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(toggle_module.main(), 0)
+        self.assertNotIn("--workspace", captured["args"])
 
 
 if __name__ == "__main__":
