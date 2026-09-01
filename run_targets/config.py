@@ -1,4 +1,4 @@
-"""Lecture des fichiers de targets d'un dépôt, et fusion équipe / local."""
+"""Reading a repository's target files, and merging team with local."""
 
 from __future__ import annotations
 
@@ -6,16 +6,15 @@ import os
 import subprocess
 import sys
 
-# Le garde-fou de version passe avant `tomllib` : ce module n'existe qu'à partir
-# de 3.11, donc l'importer plus haut ferait échouer le plugin sur un
-# `ModuleNotFoundError` illisible, exactement sur les versions que ce message
-# est censé accueillir. Le manifeste invoque `python3` nu ; rien ne garantit
-# que ce soit une 3.11.
+# The version guard comes before `tomllib`: that module only exists from 3.11
+# on, so importing it any higher would kill the plugin with an unreadable
+# `ModuleNotFoundError` on exactly the versions this message is meant to greet.
+# The manifest invokes a bare `python3`; nothing guarantees it is a 3.11.
 if sys.version_info < (3, 11):
     sys.stderr.write("run-targets requires Python 3.11 or newer.\n")
     raise SystemExit(1)
 
-import tomllib  # noqa: E402  (après le garde-fou de version, volontairement)
+import tomllib  # noqa: E402  (deliberately after the version guard)
 from dataclasses import dataclass, field  # noqa: E402
 from typing import Sequence  # noqa: E402
 
@@ -27,7 +26,7 @@ ORIGIN_LOCAL = "local"
 
 @dataclass(frozen=True)
 class Target:
-    """Un service déclaré par le dépôt."""
+    """A service declared by the repository."""
 
     name: str
     command: str
@@ -37,7 +36,7 @@ class Target:
 
 
 def is_safe_cwd(value: str) -> bool:
-    """Rejette ce qui pourrait faire sortir un service de la racine du dépôt."""
+    """Reject anything that could take a service outside the repository root."""
     if not value.strip():
         return False
     if os.path.isabs(value) or value.startswith("~"):
@@ -48,12 +47,11 @@ def is_safe_cwd(value: str) -> bool:
 def parse_run_config(
     text: str, origin: str, source: str
 ) -> tuple[list[Target], list[str]]:
-    """Parse un fichier de targets.
+    """Parse one target file.
 
-    Renvoie les targets valides et les avertissements. Une entrée fautive est
-    écartée seule : une faute de frappe sur un service ne doit pas priver
-    l'utilisateur de tous les autres. Les clés inconnues passent en silence,
-    pour qu'un fichier écrit pour une version plus récente reste lisible.
+    Returns the valid targets and the warnings. A faulty entry is dropped on its
+    own: a typo in one service must not cost the user all the others. Unknown
+    keys pass silently, so a file written for a newer version stays readable.
     """
     warnings: list[str] = []
     try:
@@ -109,11 +107,11 @@ def parse_run_config(
 def merge_run_configs(
     team: Sequence[Target], local: Sequence[Target]
 ) -> list[Target]:
-    """Superpose les targets locales aux targets d'équipe, par `name`.
+    """Layer the local targets over the team ones, by `name`.
 
-    Un même nom est remplacé en entier plutôt que fusionné champ par champ :
-    la target affichée est ainsi exactement celle qu'on lit dans un seul
-    fichier, sans avoir à recomposer mentalement deux sources.
+    A shared name is replaced whole rather than merged field by field: the
+    target on screen is then exactly the one you read in a single file, with no
+    mental recomposition of two sources.
     """
     by_name = {target.name: target for target in local}
     merged = [by_name.pop(target.name, target) for target in team]
@@ -132,10 +130,10 @@ def _read(path: str) -> str | None:
 
 
 def load_run_config(repo_root: str) -> tuple[list[Target], list[str]]:
-    """Charge les deux fichiers de la racine et les fusionne.
+    """Load both files from the root and merge them.
 
-    Chaque fichier est parsé indépendamment : un TOML cassé dans le fichier
-    local de test ne doit pas faire perdre les targets du dépôt.
+    Each file is parsed independently: broken TOML in the local scratch file
+    must not cost you the repository's targets.
     """
     warnings: list[str] = []
     groups: list[list[Target]] = []
@@ -151,11 +149,11 @@ def load_run_config(repo_root: str) -> tuple[list[Target], list[str]]:
 
 
 def resolve_repo_root(cwd: str) -> str | None:
-    """La racine du dépôt contenant `cwd`, ou None hors dépôt.
+    """The root of the repository containing `cwd`, or None outside one.
 
-    Un `git` absent est traité comme « pas de dépôt » : l'appelant sait déjà
-    dire la chose clairement, là où une `FileNotFoundError` remontée ferait
-    mourir le pane sur une trace d'exécution.
+    A missing `git` is treated as "no repository": the caller already knows how
+    to say that plainly, where a `FileNotFoundError` bubbling up would kill the
+    pane on a traceback.
     """
     try:
         result = subprocess.run(

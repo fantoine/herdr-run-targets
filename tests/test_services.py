@@ -43,7 +43,7 @@ from run_targets.tui import (
 
 
 def no_sleep():
-    """Neutralise l'attente d'arrêt : aucun test ne doit dormir pour de vrai."""
+    """Neutralise the stop wait: no test should ever really sleep."""
     return patch("run_targets.services._sleep", lambda seconds: None)
 
 
@@ -66,13 +66,13 @@ class DeriveStateTest(unittest.TestCase):
         self.assertEqual(derive_state(record, True, False), EXITED)
 
     def test_a_running_process_is_running_even_if_a_stop_was_requested(self):
-        """Le processus n'a pas encore répondu au ctrl+C : il tourne toujours."""
+        """The process has not answered the ctrl+C yet: it is still running."""
         record = ServiceRecord("w1:p2", stop_requested=True)
         self.assertEqual(derive_state(record, True, True), RUNNING)
 
 
 class PlanActionTest(unittest.TestCase):
-    """La table d'idempotence du spec, une assertion par case."""
+    """The spec's idempotence table, one assertion per cell."""
 
     def test_start(self):
         self.assertEqual(plan_action("start", RUNNING), OP_SKIP)
@@ -124,8 +124,8 @@ class NextSplitTargetTest(unittest.TestCase):
         self.assertIsNone(next_split_target(tab, set()))
 
     def test_never_targets_a_pane_the_plugin_does_not_own(self):
-        """Le pane de herdr-sidebar vit dans le même onglet et ne doit jamais
-        servir de point de split."""
+        """herdr-sidebar's pane lives in the same tab and must never serve as a
+        split point."""
         tab = TabRecord("w1:p1", None, {})
         target = next_split_target(tab, {"w1:p1", "w1:p9"})
         self.assertEqual(target, ("w1:p1", "right"))
@@ -159,8 +159,8 @@ class SkipMessageTest(unittest.TestCase):
         )
 
     def test_the_action_is_part_of_the_message(self):
-        """Deux messages d'omission coexistent désormais ; ils doivent se
-        distinguer par autre chose que le nom du service."""
+        """Two skip messages now coexist; they must be told apart by something
+        other than the service name."""
         self.assertEqual(
             skip_message("db", "close", IDLE), "db: already idle, close skipped"
         )
@@ -173,7 +173,7 @@ class SkipMessageTest(unittest.TestCase):
 
 
 class FakeClient:
-    """Un double du module `herdr`, qui enregistre ce qu'on lui demande."""
+    """A stand-in for the `herdr` module, recording what it is asked to do."""
 
     def __init__(self, panes=None, foreground=None, split_result="w1:p9", fail=None):
         self.panes = panes if panes is not None else {}
@@ -215,9 +215,9 @@ class FakeClient:
 
 
 class DyingClient(FakeClient):
-    """Un pane dont le premier plan se libère après `alive_polls` sondages.
+    """A pane whose foreground frees up after `alive_polls` polls.
 
-    `alive_polls=None` modélise le service qui ignore le ctrl+C.
+    `alive_polls=None` models the service that ignores the ctrl+C.
     """
 
     def __init__(self, alive_polls, **kwargs):
@@ -352,7 +352,7 @@ class ApplyActionTest(unittest.TestCase):
         self.assertEqual(captured["cwd"], os.path.join("/repo", "apps/web"))
 
     def test_a_failed_start_still_tracks_the_pane_it_created(self):
-        """Sans cela, une relance splitterait un pane de plus à chaque échec."""
+        """Without this, a retry would split one more pane on every failure."""
         tab = TabRecord("w1:p1", None, {})
         client = FakeClient(panes={"w1:p1"}, split_result="w1:p7", fail={"run"})
         views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
@@ -362,8 +362,8 @@ class ApplyActionTest(unittest.TestCase):
         self.assertEqual(len(messages), 1)
 
     def test_restarting_waits_for_the_process_to_die_before_starting(self):
-        """Lancer la commande sans attendre la ferait avaler par l'entrée
-        standard du processus mourant : le service resterait arrêté."""
+        """Running the command without waiting would have it swallowed by the
+        dying process's standard input: the service would stay stopped."""
         tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
         client = DyingClient(alive_polls=1, panes={"w1:p1", "w1:p2"})
         views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
@@ -391,7 +391,7 @@ class ApplyActionTest(unittest.TestCase):
         self.assertEqual(messages, ["api: still running after stop, restart skipped"])
 
     def test_a_missing_split_target_is_reported_verbatim(self):
-        """Le README documente ce message mot pour mot."""
+        """The README documents this message word for word."""
         tab = TabRecord(None, None, {})
         client = FakeClient(panes=set())
         views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
@@ -435,8 +435,8 @@ class FormatRowTest(unittest.TestCase):
         self.assertNotIn("*", row)
 
     def test_a_full_row_fits_the_narrowest_dashboard(self):
-        """30 colonnes est la largeur minimale du tableau ; au-delà, c'est le
-        marqueur d'origine qui disparaissait le premier."""
+        """30 columns is the table's minimum width; past that, the origin marker
+        was the first thing to disappear."""
         view = ServiceView(
             target=Target("a-very-long-name", "cmd", cwd=None, env={}, origin="local"),
             state=RUNNING,
@@ -470,7 +470,7 @@ class FooterTextTest(unittest.TestCase):
 
 
 class HeaderAndEmptyTextTest(unittest.TestCase):
-    """Un mauvais dépôt ne doit pas se lire comme un dépôt vide."""
+    """A wrong repository must not read as an empty one."""
 
     def test_the_header_names_the_repository(self):
         self.assertEqual(header_text("/home/me/projects/shop"), "RUN TARGETS  shop")
@@ -506,7 +506,7 @@ class VisibleLinesTest(unittest.TestCase):
 
 
 class DashboardMessagesTest(unittest.TestCase):
-    """Le retour d'une action doit survivre au rafraîchissement qui le suit."""
+    """An action's feedback must survive the refresh that follows it."""
 
     def test_refresh_does_not_erase_the_action_feedback(self):
         from unittest.mock import patch
@@ -524,8 +524,8 @@ class DashboardMessagesTest(unittest.TestCase):
                 return False
 
         with tempfile.TemporaryDirectory() as root:
-            # Un doublon dans un même fichier produit un avertissement à chaque
-            # lecture : c'est la condition qui faisait disparaître le message.
+            # A duplicate inside a single file produces a warning on every read:
+            # that is the condition that used to make the message vanish.
             with open(os.path.join(root, ".herdr-run.toml"), "w", encoding="utf-8") as handle:
                 handle.write(
                     '[[target]]\nname = "api"\ncommand = "a"\n'
@@ -539,8 +539,8 @@ class DashboardMessagesTest(unittest.TestCase):
             self.assertTrue(dashboard.warnings)
 
     def test_action_messages_expire_so_warnings_come_back(self):
-        """Sans expiration, un seul « skipped » masquerait à jamais les
-        avertissements de configuration, qui sont eux permanents."""
+        """Without expiry, a single "skipped" would hide the configuration
+        warnings forever, and those are permanent."""
         from run_targets.tui import MESSAGE_SECONDS, Dashboard
 
         dashboard = Dashboard(tab_id="w1:t1", repo_root="/repo", warnings=["boom"])
@@ -554,7 +554,7 @@ class DashboardMessagesTest(unittest.TestCase):
 
 
 class DashboardTickTest(unittest.TestCase):
-    """Un appel Herdr en échec ne doit pas emporter le pane."""
+    """A failing Herdr call must not take the pane down with it."""
 
     def test_a_failing_refresh_keeps_the_previous_views_and_says_so(self):
         import tempfile
@@ -577,9 +577,9 @@ class DashboardTickTest(unittest.TestCase):
             )
 
     def test_the_refresh_that_follows_an_action_is_guarded_too(self):
-        """`act` est le moment le plus exposé — le plugin vient d'enchaîner
-        plusieurs appels Herdr — et sa relecture doit passer par la même route
-        gardée que la boucle périodique."""
+        """`act` is the most exposed moment -- the plugin has just chained
+        several Herdr calls -- and its re-read must go through the same guarded
+        route as the periodic loop."""
         import tempfile
         from run_targets.tui import Dashboard
 
@@ -595,15 +595,15 @@ class DashboardTickTest(unittest.TestCase):
                  patch.dict(os.environ, {"HERDR_PLUGIN_STATE_DIR": root}, clear=False):
                 dashboard.act("start")
             self.assertEqual(dashboard.views, previous)
-            # L'erreur prend la place du retour de l'action : savoir que
-            # l'affichage n'est plus fiable prime sur un « skipped ».
+            # The error takes the place of the action's feedback: knowing the
+            # display is no longer trustworthy outranks a "skipped".
             self.assertEqual(
                 dashboard.messages, ["herdr pane list failed: socket closed"]
             )
 
 
 class ServicePaneNamingTest(unittest.TestCase):
-    """Un pane de service porte le nom de sa target, pour se lire d'un coup d'œil."""
+    """A service pane carries its target's name, to be read at a glance."""
 
     def test_a_created_pane_is_renamed_after_its_target(self):
         tab = TabRecord("w1:p1", None, {})
@@ -613,7 +613,7 @@ class ServicePaneNamingTest(unittest.TestCase):
         self.assertIn(("rename", "w1:p7", "api"), client.calls)
 
     def test_the_rename_happens_before_the_command_runs(self):
-        """Sinon le titre du terminal, déjà posé par la commande, gagnerait."""
+        """Otherwise the terminal title, already set by the command, would win."""
         tab = TabRecord("w1:p1", None, {})
         client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
         views = [ServiceView(target=target("api"), state=IDLE, pane_id=None)]
@@ -638,8 +638,8 @@ class ServicePaneNamingTest(unittest.TestCase):
 
 
 class FooterLinesTest(unittest.TestCase):
-    """Le pied de page se replie plutôt que de tronquer : une touche cachée
-    est une touche qui n'existe pas pour l'utilisateur."""
+    """The footer wraps rather than truncating: a hidden key is a key that does
+    not exist for the user."""
 
     def test_a_wide_pane_keeps_one_line(self):
         lines = footer_lines(MODE_EDIT, 100)

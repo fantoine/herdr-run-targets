@@ -1,8 +1,8 @@
-"""Journal des panes que le plugin a créés, indexé par onglet.
+"""Journal of the panes the plugin created, keyed by tab.
 
-Ce journal est la seule autorité sur *ce que le plugin possède*. Il ne dit
-jamais l'état d'un service — celui-ci est toujours réobservé — mais il dit
-quels panes lui appartiennent, ce qui l'empêche d'agir sur ceux des autres.
+This journal is the only authority on *what the plugin owns*. It never states a
+service's state -- that is always re-observed -- but it does say which panes
+belong to it, which is what keeps it from acting on anyone else's.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ STATE_FILE = "tabs.json"
 
 @dataclass
 class ServiceRecord:
-    """Le pane d'un service, et si son arrêt a été demandé."""
+    """A service's pane, and whether its stop was requested."""
 
     pane_id: str
     stop_requested: bool = False
@@ -25,7 +25,7 @@ class ServiceRecord:
 
 @dataclass
 class TabRecord:
-    """Ce que le plugin possède dans un onglet."""
+    """What the plugin owns inside one tab."""
 
     control_pane_id: str | None = None
     last_service_pane_id: str | None = None
@@ -67,10 +67,10 @@ def _tab_from_json(raw: object) -> TabRecord | None:
 
 
 def load_state() -> dict[str, TabRecord]:
-    """Lit le journal. Un fichier illisible est traité comme vide et signalé.
+    """Read the journal. An unreadable file is treated as empty, and reported.
 
-    Perdre la trace de panes existants est bénin ; agir sur les mauvais ne
-    l'est pas. Le doute se résout donc toujours vers l'oubli.
+    Losing track of existing panes is harmless; acting on the wrong ones is not.
+    Doubt therefore always resolves towards forgetting.
     """
     try:
         with open(state_path(), "r", encoding="utf-8") as handle:
@@ -92,11 +92,11 @@ def load_state() -> dict[str, TabRecord]:
 
 
 def save_state(state: dict[str, TabRecord]) -> None:
-    """Écrit le journal par fichier temporaire puis `os.replace`.
+    """Write the journal through a temporary file, then `os.replace`.
 
-    Le remplacement est atomique : une interruption laisse l'ancien fichier
-    intact plutôt qu'un JSON tronqué, qu'une lecture ultérieure prendrait pour
-    une absence de panes suivis.
+    The replacement is atomic: an interruption leaves the old file intact rather
+    than truncated JSON, which a later read would take for an absence of tracked
+    panes.
     """
     payload = {
         tab_id: {
@@ -121,15 +121,15 @@ def save_state(state: dict[str, TabRecord]) -> None:
 
 
 def register_control_pane(tab_id: str, pane_id: str) -> None:
-    """Inscrit un pane de contrôle sans effacer les autres onglets.
+    """Record a control pane without erasing the other tabs.
 
-    Le journal est réécrit en entier à chaque sauvegarde. Deux tableaux de bord
-    qui démarrent au même instant lisaient donc tous deux l'état d'avant, et le
-    second réécrivait par-dessus l'entrée du premier — observé en vrai, une
-    entrée de workspace perdue et sa bascule qui ne reconnaissait plus rien.
-    Recharger juste avant d'écrire resserre la fenêtre à quelques
-    microsecondes ; seul un verrou l'éliminerait, ce que ne justifie pas un
-    plugin où deux tableaux de bord démarrent rarement ensemble.
+    The journal is rewritten whole on every save. Two dashboards starting at the
+    same instant would therefore both read the previous state, and the second
+    would write over the first one's entry -- seen for real, a workspace entry
+    lost and its toggle recognising nothing any more. Reloading right before
+    writing narrows the window to a few microseconds; only a lock would close it
+    entirely, which a plugin where two dashboards rarely start together does not
+    justify.
     """
     state = load_state()
     record = state.setdefault(tab_id, TabRecord())
@@ -140,5 +140,5 @@ def register_control_pane(tab_id: str, pane_id: str) -> None:
 def prune_state(
     state: dict[str, TabRecord], live_tab_ids: set[str]
 ) -> dict[str, TabRecord]:
-    """Écarte les onglets qui n'existent plus."""
+    """Drop the tabs that no longer exist."""
     return {tab_id: record for tab_id, record in state.items() if tab_id in live_tab_ids}

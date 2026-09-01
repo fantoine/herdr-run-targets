@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point d'entrée du pane : prépare le contexte puis lance le TUI."""
+"""Pane entry point: prepare the context, then start the TUI."""
 
 from __future__ import annotations
 
@@ -33,23 +33,23 @@ def main() -> int:
         sys.stderr.write(f"{os.getcwd()} is not inside a git repository.\n")
         return 1
 
-    # Le pane de contrôle s'enregistre lui-même : c'est lui, et non l'action,
-    # qui connaît son propre identifiant.
+    # The control pane registers itself: it, and not the action, is what knows
+    # its own id.
     state = load_state()
     try:
         live_tabs = {pane.get("tab_id") for pane in herdr.list_panes()}
         state = prune_state(state, {tab for tab in live_tabs if isinstance(tab, str)})
     except RuntimeError as error:
-        # Élaguer est une optimisation, pas une condition d'ouverture : un appel
-        # Herdr en échec ne doit pas empêcher le tableau de bord de s'afficher.
+        # Pruning is an optimisation, not a condition for opening: a failing
+        # Herdr call must not keep the dashboard from showing up.
         sys.stderr.write(f"Could not prune the plugin state: {error}\n")
-    # Rechargé juste avant l'écriture pour ne pas écraser un autre tableau de
-    # bord qui se serait inscrit entre-temps.
+    # Reloaded right before writing so we do not overwrite another dashboard
+    # that registered itself in the meantime.
     register_control_pane(tab_id, pane_id)
 
-    # L'onglet ne se nomme que si nous l'avons créé : `toggle` pose la marque
-    # sur ce seul chemin. Un échec de renommage est sans conséquence, le
-    # tableau de bord s'ouvre quand même.
+    # The tab is only named if we created it: `toggle` sets the mark on that
+    # path alone. A failed rename has no consequence, the dashboard opens
+    # regardless.
     if os.environ.get(TAB_OWNED_ENV):
         try:
             herdr.tab_rename(tab_id, TAB_LABEL)
@@ -59,7 +59,7 @@ def main() -> int:
     dashboard = Dashboard(tab_id=tab_id, repo_root=repo_root, warnings=[])
     curses.wrapper(run_dashboard, dashboard)
 
-    # En sortie, le pane disparaît : on ne se déclare plus comme pane de contrôle.
+    # On the way out the pane disappears: stop claiming to be the control pane.
     state = load_state()
     record = state.get(tab_id)
     if record is not None and record.control_pane_id == pane_id:

@@ -1,4 +1,4 @@
-"""Client du CLI Herdr : transport, contrat JSON, et enveloppes de panes."""
+"""Herdr CLI client: transport, JSON contract, and pane wrappers."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ from typing import Sequence
 
 
 def herdr_bin() -> str:
-    """Le binaire Herdr à rappeler ; Herdr l'injecte dans l'environnement plugin."""
+    """The Herdr binary to call back into; Herdr injects it in the plugin env."""
     return os.environ.get("HERDR_BIN_PATH") or "herdr"
 
 
 def describe_herdr_failure(
     args: Sequence[str], returncode: int, stdout: str, stderr: str
 ) -> str:
-    """Compose le message d'un échec, en préférant les mots de Herdr.
+    """Compose a failure message, preferring Herdr's own words.
 
-    Herdr rend `{"error": {"code": ..., "message": ...}}` sur échec ; ce message
-    est bien plus parlant qu'un code de sortie ou qu'une plainte de parsing.
+    Herdr returns `{"error": {"code": ..., "message": ...}}` on failure; that
+    message says far more than an exit code or a parsing complaint.
     """
     try:
         payload = json.loads(stdout)
@@ -38,11 +38,11 @@ def describe_herdr_failure(
 
 
 def herdr_call(args: Sequence[str]) -> str:
-    """Lance une commande Herdr et rend sa sortie standard telle quelle.
+    """Run a Herdr command and return its standard output as-is.
 
-    Séparé de `herdr_result` parce que certaines commandes — `pane run` par
-    exemple — ne rendent rien du tout en cas de succès : exiger du JSON ferait
-    passer chaque réussite pour un échec.
+    Kept apart from `herdr_result` because some commands -- `pane run` among
+    them -- return nothing at all on success: demanding JSON would turn every
+    success into a failure.
     """
     try:
         completed = subprocess.run(
@@ -61,7 +61,7 @@ def herdr_call(args: Sequence[str]) -> str:
 
 
 def herdr_result(args: Sequence[str]) -> dict:
-    """Lance une commande Herdr et rend son objet `result`."""
+    """Run a Herdr command and return its `result` object."""
     stdout = herdr_call(args)
     try:
         payload = json.loads(stdout)
@@ -74,13 +74,13 @@ def herdr_result(args: Sequence[str]) -> dict:
 
 
 def list_panes() -> list[dict]:
-    """Tous les panes de la session."""
+    """Every pane in the session."""
     panes = herdr_result(["pane", "list"]).get("panes")
     return [p for p in panes if isinstance(p, dict)] if isinstance(panes, list) else []
 
 
 def panes_in_tab(tab_id: str) -> dict[str, dict]:
-    """Les panes d'un onglet, indexés par identifiant."""
+    """A tab's panes, keyed by pane id."""
     return {
         pane["pane_id"]: pane
         for pane in list_panes()
@@ -89,13 +89,13 @@ def panes_in_tab(tab_id: str) -> dict[str, dict]:
 
 
 def process_info(pane_id: str) -> dict:
-    """Ce qui tourne au premier plan d'un pane."""
+    """What runs in a pane's foreground."""
     info = herdr_result(["pane", "process-info", "--pane", pane_id]).get("process_info")
     return info if isinstance(info, dict) else {}
 
 
 def has_foreground_command(info: dict) -> bool:
-    """Vrai quand un processus autre que le shell occupe le premier plan."""
+    """True when a process other than the shell holds the foreground."""
     shell_pid = info.get("shell_pid")
     processes = info.get("foreground_processes")
     if not isinstance(shell_pid, int) or not isinstance(processes, list):
@@ -116,7 +116,7 @@ def split_args(
     cwd: str | None,
     env: dict[str, str] | None,
 ) -> list[str]:
-    """La ligne de commande d'un split. Isolée pour être testable sans Herdr."""
+    """A split's command line. Isolated so it is testable without Herdr."""
     args = ["pane", "split", pane_id, "--direction", direction, "--no-focus"]
     if ratio is not None:
         args += ["--ratio", str(ratio)]
@@ -134,10 +134,10 @@ def pane_split(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
 ) -> str:
-    """Crée un pane et rend son identifiant.
+    """Create a pane and return its id.
 
-    L'identifiant est lu dans la réponse, jamais déduit : splitter `w4:p5` a
-    rendu `w4:p7` lors de la sonde, les identifiants ne se suivent pas.
+    The id is read from the response, never inferred: splitting `w4:p5` returned
+    `w4:p7` during the probe, so ids do not run in sequence.
     """
     result = herdr_result(split_args(pane_id, direction, ratio, cwd, env))
     pane = result.get("pane")
@@ -148,7 +148,7 @@ def pane_split(
 
 
 def pane_run(pane_id: str, command: str) -> None:
-    """Soumet une commande au shell du pane, texte et Entrée en une opération."""
+    """Submit a command to the pane's shell, text and Enter in one operation."""
     herdr_call(["pane", "run", pane_id, command])
 
 
@@ -157,15 +157,15 @@ def pane_send_keys(pane_id: str, *keys: str) -> None:
 
 
 def pane_rename(pane_id: str, label: str) -> None:
-    """Nomme un pane. Sert à porter le nom de la target sur son pane de service."""
+    """Name a pane. Used to carry a target's name onto its service pane."""
     herdr_call(["pane", "rename", pane_id, label])
 
 
 def tab_rename(tab_id: str, label: str) -> None:
-    """Nomme un onglet.
+    """Name a tab.
 
-    `plugin pane open` n'a aucun drapeau de libellé — le `title` du manifeste
-    nomme le pane, pas l'onglet —, donc le renommage se fait après coup.
+    `plugin pane open` has no label flag -- the manifest's `title` names the
+    pane, not the tab -- so renaming happens afterwards.
     """
     herdr_call(["tab", "rename", tab_id, label])
 

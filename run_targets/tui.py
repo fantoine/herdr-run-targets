@@ -1,4 +1,4 @@
-"""Tableau de bord curses : rendu, modes, boucle clavier."""
+"""Curses dashboard: rendering, modes, keyboard loop."""
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ MODE_EDIT = "edit"
 
 REFRESH_SECONDS = 1.0
 
-# Un retour d'action est un événement ponctuel : passé ce délai il s'efface, ce
-# qui rend de nouveau visibles les avertissements de configuration, eux
-# permanents. Sans expiration, un seul « skipped » les masquerait pour toujours.
+# An action's feedback is a one-off event: past this delay it clears, which
+# makes the configuration warnings -- permanent ones -- visible again. Without
+# expiry, a single "skipped" would hide them forever.
 MESSAGE_SECONDS = 6.0
 
 NAME_WIDTH = 12
@@ -28,12 +28,11 @@ SMALL_SCREEN_TEXT = "Too small - q to close"
 
 
 def format_row(view: ServiceView, checked: bool, cursor: bool, mode: str) -> str:
-    """Une ligne du tableau, en texte pur pour rester testable.
+    """One row of the table, as plain text so it stays testable.
 
-    Les colonnes sont taillées pour qu'une ligne complète tienne dans les 30
-    caractères minimaux du tableau de bord : au-delà, c'est le marqueur
-    d'origine qui disparaissait le premier, et la promesse « une commande
-    différente n'est jamais un mystère » avec lui.
+    The columns are sized so a complete row fits in the dashboard's minimum 30
+    characters: beyond that, the origin marker was the first thing to disappear,
+    and with it the promise that "a different command is never a mystery".
     """
     marker = ">" if cursor else " "
     box = ("[x] " if checked else "[ ] ") if mode == MODE_EDIT else ""
@@ -43,17 +42,17 @@ def format_row(view: ServiceView, checked: bool, cursor: bool, mode: str) -> str
 
 
 def header_text(repo_root: str) -> str:
-    """Le titre, qui nomme le dépôt observé.
+    """The title, which names the repository being watched.
 
-    Sans ce nom, un tableau de bord ouvert sur le mauvais répertoire — le
-    plugin est lui-même un dépôt git — annonce « aucune target » avec le même
-    aplomb qu'un dépôt réellement vide.
+    Without that name, a dashboard opened on the wrong directory -- the plugin
+    is itself a git repository -- announces "no targets" with just as much
+    confidence as a genuinely empty repository.
     """
     return f"RUN TARGETS  {os.path.basename(os.path.normpath(repo_root))}"
 
 
 def empty_text(repo_root: str) -> str:
-    """La ligne d'un dépôt sans target, qui nomme le répertoire inspecté."""
+    """The line for a repository with no target, naming the directory inspected."""
     name = os.path.basename(os.path.normpath(repo_root))
     return f"No targets in {name}. Add .herdr-run.toml or .herdr-run.local.toml"
 
@@ -61,11 +60,11 @@ def empty_text(repo_root: str) -> str:
 def visible_lines(
     messages: list[str], warnings: list[str], capacity: int
 ) -> list[str]:
-    """Les lignes à afficher en pied de tableau, et ce qui n'y tient pas.
+    """The lines to show at the foot of the table, and what does not fit there.
 
-    Une action porte sur une sélection : n'en montrer qu'une ligne cacherait la
-    plupart des « skipped » d'un lot. Quand tout ne tient pas, la dernière ligne
-    compte le reste plutôt que de le taire.
+    An action covers a selection: showing only one line would hide most of a
+    batch's "skipped" entries. When it all does not fit, the last line counts
+    the rest rather than keeping quiet about it.
     """
     lines = list(messages or warnings)
     if not lines or capacity <= 0:
@@ -78,21 +77,20 @@ def visible_lines(
 
 
 def footer_text(mode: str) -> str:
-    """La barre d'aide, qui change avec le mode.
+    """The help bar, which changes with the mode.
 
-    Le mode vue n'offre aucune touche destructrice : c'est d'abord un affichage.
-    Il n'y a pas non plus de touche « focus » — Herdr 0.8.2 n'expose aucun moyen
-    de donner le focus à un pane arbitraire par son identifiant. Reste le
-    préfixe Herdr, dont on n'a pas vérifié qu'un TUI curses le laisse passer.
+    View mode offers no destructive key: it is a display first. There is no
+    "focus" key either -- Herdr 0.8.2 exposes no way to focus an arbitrary pane
+    by its id. That leaves the Herdr prefix, which we have not verified a curses
+    TUI lets through.
     """
     return "  ".join(footer_segments(mode))
 
 
 def footer_segments(mode: str) -> list[str]:
-    """Les éléments du pied de page, insécables.
+    """The footer's items, each unbreakable.
 
-    Les garder séparés permet de replier la barre sans jamais couper une
-    touche en deux.
+    Keeping them separate lets the bar wrap without ever cutting a key in two.
     """
     if mode == MODE_EDIT:
         return [
@@ -108,12 +106,12 @@ def footer_segments(mode: str) -> list[str]:
 
 
 def footer_lines(mode: str, width: int) -> list[str]:
-    """Replie le pied de page sur autant de lignes que la largeur l'impose.
+    """Wrap the footer over as many lines as the width demands.
 
-    Tronquer cachait `s stop`, `r restart` et `x close` dès qu'un service
-    partageait l'onglet : une touche invisible n'existe pas pour qui s'en sert.
-    Un élément plus large que le pane occupe sa ligne seul plutôt que d'être
-    coupé — il dépassera, mais restera identifiable.
+    Truncating hid `s stop`, `r restart` and `x close` as soon as one service
+    shared the tab: an invisible key does not exist for whoever needs it. An
+    item wider than the pane takes its line alone rather than being cut -- it
+    will overflow, but stays identifiable.
     """
     lines: list[str] = []
     current = ""
@@ -131,7 +129,7 @@ def footer_lines(mode: str, width: int) -> list[str]:
 
 
 class Dashboard:
-    """L'état de l'écran : mode, curseur, cases cochées, dernier message."""
+    """The screen's state: mode, cursor, checked boxes, latest message."""
 
     def __init__(self, tab_id: str, repo_root: str, warnings: list[str]) -> None:
         self.tab_id = tab_id
@@ -157,32 +155,32 @@ class Dashboard:
 
     def refresh(self) -> None:
         targets, warnings = load_run_config(self.repo_root)
-        # `refresh` ne touche jamais `messages` : un avertissement de configuration
-        # est un état permanent des fichiers, le retour d'une action est un
-        # événement ponctuel. Les confondre effacerait le « skipped » que
-        # l'utilisateur doit voir, à chaque rafraîchissement.
+        # `refresh` never touches `messages`: a configuration warning is a
+        # permanent state of the files, an action's feedback is a one-off event.
+        # Conflating them would erase, on every refresh, the "skipped" the user
+        # needs to see.
         self.warnings = warnings
         self.views = observe(self.tab(), targets, herdr, self.tab_id)
         if self.cursor >= len(self.views):
             self.cursor = max(0, len(self.views) - 1)
 
     def set_messages(self, messages: list[str]) -> None:
-        """Pose les messages d'action et l'instant de leur affichage."""
+        """Set the action messages, and the instant they went on screen."""
         self.messages = list(messages)
         self.messages_at = time.monotonic()
 
     def expire_messages(self, now: float) -> None:
-        """Efface les messages d'action périmés."""
+        """Clear action messages that have expired."""
         if self.messages and now - self.messages_at >= MESSAGE_SECONDS:
             self.messages = []
 
     def tick(self) -> None:
-        """Rafraîchit sans laisser une panne de Herdr emporter le pane.
+        """Refresh without letting a Herdr failure take the pane down with it.
 
-        Un appel qui échoue — serveur qui redémarre, pane fermé entre deux
-        commandes — ne doit pas dérouler la pile jusqu'à la sortie du TUI : la
-        promesse du tableau de bord est d'être un pane qu'on laisse ouvert. Les
-        vues précédentes restent affichées, périmées mais lisibles.
+        A call that fails -- a server restarting, a pane closed between two
+        commands -- must not unwind the stack out of the TUI: the dashboard's
+        promise is to be a pane you leave open. The previous views stay on
+        screen, stale but readable.
         """
         try:
             self.refresh()
@@ -200,17 +198,17 @@ class Dashboard:
         save_state(state)
         self.checked.clear()
         self.mode = MODE_VIEW
-        # Même route gardée que la boucle périodique : le rafraîchissement qui
-        # suit une action est le plus exposé — le plugin vient d'enchaîner
-        # plusieurs appels Herdr — et il ne doit pas plus qu'un autre remonter
-        # jusqu'à `curses.wrapper`. Si ce rafraîchissement échoue, l'erreur
-        # remplace le retour de l'action : ce que l'utilisateur doit lire en
-        # priorité, c'est que l'affichage n'est plus fiable.
+        # Same guarded route as the periodic loop: the refresh that follows an
+        # action is the most exposed -- the plugin has just chained several
+        # Herdr calls -- and it must no more than any other surface up to
+        # `curses.wrapper`. If that refresh fails, the error replaces the
+        # action's feedback: what the user needs to read first is that the
+        # display is no longer trustworthy.
         self.tick()
 
 
 def run_dashboard(stdscr, dashboard: Dashboard) -> None:
-    """Boucle de rendu et de clavier."""
+    """Rendering and keyboard loop."""
     curses.curs_set(0)
     stdscr.nodelay(True)
     last_refresh = 0.0
@@ -225,9 +223,9 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
         if height < 4 or width < 30:
-            # Le clavier est lu ici aussi : un pane trop étroit qui ignore
-            # toutes les touches ne peut plus être fermé de l'intérieur, et
-            # une poignée de divider suffit à l'y réduire.
+            # The keyboard is read here too: a pane too narrow that ignores
+            # every key can no longer be closed from the inside, and a handful
+            # of divider drags is enough to shrink it that far.
             stdscr.addstr(0, 0, SMALL_SCREEN_TEXT[: max(0, width - 1)])
             stdscr.refresh()
             key = stdscr.getch()
@@ -238,8 +236,8 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             continue
 
         stdscr.addstr(0, 0, header_text(dashboard.repo_root)[: width - 1], curses.A_BOLD)
-        # Le pied de page peut occuper plusieurs lignes en mode édition ;
-        # les rangées de services ne doivent pas empiéter dessus.
+        # The footer can take several lines in edit mode; the service rows must
+        # not encroach on it.
         footer_height = len(footer_lines(dashboard.mode, max(1, width - 1)))
         rows_capacity = max(0, height - 3 - footer_height)
         used = 0
@@ -284,7 +282,7 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             elif key in (curses.KEY_UP, ord("k")):
                 dashboard.cursor = max(dashboard.cursor - 1, 0)
         else:
-            if key == 27:  # échap
+            if key == 27:  # escape
                 dashboard.checked.clear()
                 dashboard.mode = MODE_VIEW
             elif key == ord(" "):
