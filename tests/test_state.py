@@ -342,5 +342,46 @@ class ManifestCommandsTest(unittest.TestCase):
                     )
 
 
+class TabLabelTest(unittest.TestCase):
+    """L'onglet ne se nomme que lorsque le plugin l'a créé lui-même."""
+
+    def test_the_create_call_marks_the_tab_as_ours(self):
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        with patch.object(toggle_module.herdr, "list_panes", return_value=[]), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value={}), \
+             patch.dict(os.environ, {}, clear=True):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(toggle_module.main(), 0)
+        self.assertIn("--env", captured["args"])
+        self.assertIn(f"{toggle_module.TAB_OWNED_ENV}=1", captured["args"])
+
+    def test_the_reopen_call_does_not_mark_the_tab(self):
+        import toggle as toggle_module
+
+        captured = {}
+
+        def fake_result(args):
+            captured["args"] = list(args)
+            return {}
+
+        state = {"w1:t1": TabRecord(services={"api": ServiceRecord("w1:p2")})}
+        panes = [{"pane_id": "w1:p2", "tab_id": "w1:t1", "cwd": "/repo"}]
+        with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
+             patch.object(toggle_module.herdr, "herdr_result", fake_result), \
+             patch.object(toggle_module, "load_state", return_value=state), \
+             patch.dict(os.environ, {}, clear=True):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(toggle_module.main(), 0)
+        self.assertNotIn(f"{toggle_module.TAB_OWNED_ENV}=1", captured["args"])
+
+
 if __name__ == "__main__":
     unittest.main()

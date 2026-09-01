@@ -98,6 +98,19 @@ Actions apply to every checked row. With nothing checked, they apply to the row
 under the cursor. After an action the dashboard returns to view mode and clears
 the selection, so a stray second keypress cannot replay a batch.
 
+## Naming
+
+The tab the plugin creates is named `run`. A dashboard reopened into a tab that
+already existed keeps that tab's own label — the plugin only renames a tab it
+created itself.
+
+Each service pane is named after its target, so a column of them reads at a
+glance instead of showing four identical shell titles. The rename happens
+before the command starts, so the command's own terminal title does not win.
+
+Both renames are best-effort: if Herdr refuses one, the service still starts and
+the dashboard still opens.
+
 ## States
 
 | State | Meaning |

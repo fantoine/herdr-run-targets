@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from run_targets import herdr
+from run_targets import TAB_OWNED_ENV, herdr
 from run_targets.state import TabRecord, load_state, save_state
 
 PLUGIN_ID = "fantoine.run-targets"
@@ -130,6 +130,7 @@ def main() -> int:
                 "--plugin", PLUGIN_ID,
                 "--entrypoint", ENTRYPOINT,
                 "--placement", "tab",
+                "--env", f"{TAB_OWNED_ENV}=1",
             ]
             # Pas de pane de service pour hériter d'un répertoire : c'est le
             # contexte de l'action, injecté par Herdr, qui porte celui du

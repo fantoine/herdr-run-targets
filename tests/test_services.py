@@ -206,6 +206,9 @@ class FakeClient:
     def pane_send_keys(self, pane_id, *keys):
         self.calls.append(("keys", pane_id, keys))
 
+    def pane_rename(self, pane_id, label):
+        self.calls.append(("rename", pane_id, label))
+
     def pane_close(self, pane_id):
         self.calls.append(("close", pane_id))
 
@@ -262,8 +265,14 @@ class ApplyActionTest(unittest.TestCase):
         client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
         views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
         apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(client.calls[0], ("split", "w1:p1", "right"))
-        self.assertEqual(client.calls[1], ("run", "w1:p7", "run-it"))
+        self.assertEqual(
+            client.calls,
+            [
+                ("split", "w1:p1", "right"),
+                ("rename", "w1:p7", "api"),
+                ("run", "w1:p7", "run-it"),
+            ],
+        )
         self.assertEqual(tab.services["api"].pane_id, "w1:p7")
         self.assertEqual(tab.last_service_pane_id, "w1:p7")
         self.assertFalse(tab.services["api"].stop_requested)
@@ -590,6 +599,41 @@ class DashboardTickTest(unittest.TestCase):
             self.assertEqual(
                 dashboard.messages, ["herdr pane list failed: socket closed"]
             )
+
+
+class ServicePaneNamingTest(unittest.TestCase):
+    """Un pane de service porte le nom de sa target, pour se lire d'un coup d'œil."""
+
+    def test_a_created_pane_is_renamed_after_its_target(self):
+        tab = TabRecord("w1:p1", None, {})
+        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
+        views = [ServiceView(target=target("api"), state=IDLE, pane_id=None)]
+        apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertIn(("rename", "w1:p7", "api"), client.calls)
+
+    def test_the_rename_happens_before_the_command_runs(self):
+        """Sinon le titre du terminal, déjà posé par la commande, gagnerait."""
+        tab = TabRecord("w1:p1", None, {})
+        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
+        views = [ServiceView(target=target("api"), state=IDLE, pane_id=None)]
+        apply_action("start", views, tab, "/repo", client, "w1:t1")
+        kinds = [c[0] for c in client.calls]
+        self.assertLess(kinds.index("rename"), kinds.index("run"))
+
+    def test_a_failed_rename_does_not_stop_the_service(self):
+        tab = TabRecord("w1:p1", None, {})
+        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7", fail={"rename"})
+        views = [ServiceView(target=target("api"), state=IDLE, pane_id=None)]
+        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertIn(("run", "w1:p7", "run-it"), client.calls)
+        self.assertEqual(messages, [])
+
+    def test_restarting_in_an_existing_pane_does_not_rename(self):
+        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        client = FakeClient(panes={"w1:p1", "w1:p2"})
+        views = [ServiceView(target=target("api"), state=STOPPED, pane_id="w1:p2")]
+        apply_action("start", views, tab, "/repo", client, "w1:t1")
+        self.assertNotIn("rename", [c[0] for c in client.calls])
 
 
 if __name__ == "__main__":

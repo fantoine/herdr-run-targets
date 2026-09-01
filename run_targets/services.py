@@ -206,6 +206,14 @@ def _create_and_start(
         pane_id, direction, ratio=ratio, cwd=cwd, env=view.target.env or None
     )
     tab.last_service_pane_id = new_pane
+    # Le pane porte le nom de sa target : dans une colonne de services, un titre
+    # de terminal générique ne dit rien de ce qui tourne là. Le renommage
+    # précède le lancement, sinon la commande poserait son propre titre.
+    # Un échec ici ne doit pas empêcher le service de démarrer.
+    try:
+        client.pane_rename(new_pane, view.target.name)
+    except RuntimeError:
+        pass
     _start_in_pane(tab, view, new_pane, client)
 
 
