@@ -1,0 +1,18 @@
+id = "fantoine.run-targets"
+name = "Run Targets"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Launch, stop and restart a repository's dev services from a dashboard pane"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "toggle"
+title = "Run targets"
+contexts = ["workspace"]
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/toggle.py\""]
+
+[[panes]]
+id = "dashboard"
+title = "Run targets"
+placement = "tab"
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/dashboard.py\""]
