@@ -156,6 +156,20 @@ def pane_send_keys(pane_id: str, *keys: str) -> None:
     herdr_call(["pane", "send-keys", pane_id, *keys])
 
 
+def pane_rename(pane_id: str, label: str) -> None:
+    """Nomme un pane. Sert à porter le nom de la target sur son pane de service."""
+    herdr_call(["pane", "rename", pane_id, label])
+
+
+def tab_rename(tab_id: str, label: str) -> None:
+    """Nomme un onglet.
+
+    `plugin pane open` n'a aucun drapeau de libellé — le `title` du manifeste
+    nomme le pane, pas l'onglet —, donc le renommage se fait après coup.
+    """
+    herdr_call(["tab", "rename", tab_id, label])
+
+
 def pane_close(pane_id: str) -> None:
     herdr_call(["pane", "close", pane_id])
 

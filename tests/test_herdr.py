@@ -8,6 +8,8 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from run_targets.herdr import (
+    pane_rename,
+    tab_rename,
     describe_herdr_failure,
     has_foreground_command,
     herdr_bin,
@@ -160,6 +162,20 @@ class PanesInTabTest(unittest.TestCase):
         ]
         with patch("run_targets.herdr.list_panes", return_value=panes):
             self.assertEqual(sorted(panes_in_tab("w1:t1")), ["w1:p1"])
+
+
+class RenameArgsTest(unittest.TestCase):
+    """Les deux renommages passent par `herdr_call`, sans contrat JSON."""
+
+    def test_pane_rename_sends_the_label(self):
+        with patch("run_targets.herdr.herdr_call", return_value="") as call:
+            pane_rename("w1:p2", "api")
+        self.assertEqual(call.call_args.args[0], ["pane", "rename", "w1:p2", "api"])
+
+    def test_tab_rename_sends_the_label(self):
+        with patch("run_targets.herdr.herdr_call", return_value="") as call:
+            tab_rename("w1:t1", "run")
+        self.assertEqual(call.call_args.args[0], ["tab", "rename", "w1:t1", "run"])
 
 
 if __name__ == "__main__":

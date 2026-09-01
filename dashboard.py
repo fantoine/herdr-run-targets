@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_targets.config import resolve_repo_root
 from run_targets.state import TabRecord, load_state, prune_state, save_state
 from run_targets.tui import Dashboard, run_dashboard
-from run_targets import herdr
+from run_targets import TAB_LABEL, TAB_OWNED_ENV, herdr
 
 
 def main() -> int:
@@ -40,6 +40,15 @@ def main() -> int:
     record = state.setdefault(tab_id, TabRecord())
     record.control_pane_id = pane_id
     save_state(state)
+
+    # L'onglet ne se nomme que si nous l'avons créé : `toggle` pose la marque
+    # sur ce seul chemin. Un échec de renommage est sans conséquence, le
+    # tableau de bord s'ouvre quand même.
+    if os.environ.get(TAB_OWNED_ENV):
+        try:
+            herdr.tab_rename(tab_id, TAB_LABEL)
+        except RuntimeError as error:
+            sys.stderr.write(f"Could not rename the tab: {error}\n")
 
     dashboard = Dashboard(tab_id=tab_id, repo_root=repo_root, warnings=[])
     curses.wrapper(run_dashboard, dashboard)
