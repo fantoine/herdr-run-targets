@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check --output-format github
+
+  test:
+    # 3.11 is the floor the manifest declares and the version guard enforces;
+    # 3.13 is what a fresh machine gets. Both platforms, because the plugin
+    # ships for both and the copy engine differs between them.
+    name: tests (${{ matrix.os }}, python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the suite
+        # Warnings are errors: a deprecation that reaches a plugin pane shows up
+        # as a traceback in a pane Herdr tears down immediately.
+        env:
+          PYTHONWARNINGS: error
+        run: python -m unittest discover -s tests -v
+
+  guard:
+    name: version guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: An older Python is turned away, not crashed into
+        # The manifest invokes a bare `python3`; on a machine whose python3 is
+        # older than the floor, the plugin must say so and exit 1 rather than
+        # die on a ModuleNotFoundError from tomllib.
+        run: |
+          set -o pipefail
+          ! python -c "import run_targets" 2> stderr.txt
+          grep -q "requires Python 3.11 or newer" stderr.txt

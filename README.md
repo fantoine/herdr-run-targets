@@ -6,6 +6,7 @@
   **Every dev service your repo declares, one keypress away.**
 
   ![version](https://img.shields.io/badge/version-0.2.1-2B8ABF)
+  [![CI](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml/badge.svg)](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml)
   ![license](https://img.shields.io/badge/license-MIT-blue)
   ![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.2-4AABDF)
 </div>
@@ -260,6 +261,10 @@ uvx ruff check .
 
 Standard library only; nothing to install. The lint is clean with ruff's
 defaults — no configuration file, so any recent version applies the same rules.
+
+CI runs both on every push and pull request, over Python 3.11 and 3.13 on Linux
+and macOS, with warnings as errors. A third job checks that an older Python is
+turned away by the version guard rather than crashed into.
 
 ## License
 

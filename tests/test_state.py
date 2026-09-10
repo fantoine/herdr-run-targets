@@ -380,6 +380,16 @@ class ManifestTest(unittest.TestCase):
                         f"{entry.get('id')!r} command token {token!r} is a bare script path",
                     )
 
+    def test_the_readme_badge_matches_the_manifest_version(self):
+        """Two places carry the version, and they drifted once already: the
+        badge still read 0.1.0 after the manifest moved on."""
+        with open(MANIFEST_PATH, "rb") as handle:
+            version = tomllib.load(handle)["version"]
+        readme = os.path.join(os.path.dirname(MANIFEST_PATH), "README.md")
+        with open(readme, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn(f"badge/version-{version}-", text)
+
     def test_the_dashboard_pane_is_declared_as_an_overlay(self):
         with open(MANIFEST_PATH, "rb") as handle:
             manifest = tomllib.load(handle)
