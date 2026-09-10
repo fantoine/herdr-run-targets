@@ -4,30 +4,31 @@ import json
 import os
 import sys
 import tempfile
-import tomllib
 import unittest
 from unittest.mock import patch
 
+import tomllib
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from run_targets.settings import PLACEMENT_OVERLAY, PLACEMENT_POPUP, Settings
 from run_targets.state import (
-    register_control_pane,
     ServiceRecord,
     WorkspaceRecord,
     load_state,
     prune_state,
+    register_control_pane,
     save_state,
     state_path,
 )
-from run_targets.settings import PLACEMENT_OVERLAY, PLACEMENT_POPUP, Settings
 from toggle import current_workspace_id, decide_toggle, open_args
 
 
 @contextlib.contextmanager
 def state_dir():
-    with tempfile.TemporaryDirectory() as directory:
-        with patch.dict(os.environ, {"HERDR_PLUGIN_STATE_DIR": directory}, clear=False):
-            yield directory
+    with tempfile.TemporaryDirectory() as directory, \
+         patch.dict(os.environ, {"HERDR_PLUGIN_STATE_DIR": directory}, clear=False):
+        yield directory
 
 
 def service(tab_id="w1:t7", pane_id="w1:p7", stop_requested=False):
@@ -373,7 +374,7 @@ class ManifestTest(unittest.TestCase):
         self.assertTrue(entries, "manifest has no actions or panes to check")
         for entry in entries:
             for token in entry.get("command", []):
-                if token.endswith(".py") or token.endswith(".sh"):
+                if token.endswith((".py", ".sh")):
                     self.assertTrue(
                         token.startswith("/") or "$HERDR_PLUGIN_ROOT" in token,
                         f"{entry.get('id')!r} command token {token!r} is a bare script path",

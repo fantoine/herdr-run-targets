@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 import subprocess
-import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Sequence
+
+import tomllib
 
 # The Python version guard lives in this package's __init__, which runs before
 # this module can import `tomllib`.
@@ -77,10 +78,9 @@ def parse_run_config(
             continue
 
         cwd = entry.get("cwd")
-        if cwd is not None:
-            if not isinstance(cwd, str) or not is_safe_cwd(cwd):
-                warnings.append(f"{source}: target {name!r} has an unsafe cwd; skipped")
-                continue
+        if cwd is not None and (not isinstance(cwd, str) or not is_safe_cwd(cwd)):
+            warnings.append(f"{source}: target {name!r} has an unsafe cwd; skipped")
+            continue
 
         raw_env = entry.get("env")
         env = (
@@ -153,6 +153,9 @@ def resolve_repo_root(cwd: str) -> str | None:
             ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            # A non-zero exit is the answer "not a repository", not an error to
+            # raise: the return code is read below.
+            check=False,
         )
     except FileNotFoundError:
         return None

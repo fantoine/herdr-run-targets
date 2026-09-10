@@ -5,7 +5,7 @@ from __future__ import annotations
 import curses
 import os
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
 from . import herdr
 from .config import ORIGIN_LOCAL, load_run_config

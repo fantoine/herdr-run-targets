@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import re
 import sys
-import tomllib
 from dataclasses import dataclass
+
+import tomllib
 
 SETTINGS_FILE = "config.toml"
 

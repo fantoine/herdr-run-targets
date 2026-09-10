@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def herdr_bin() -> str:
@@ -46,7 +46,9 @@ def herdr_call(args: Sequence[str]) -> str:
     """
     try:
         completed = subprocess.run(
-            [herdr_bin(), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            # A failing herdr command is reported through its own message, read
+            # from the payload below, so the exit code is ours to inspect.
+            [herdr_bin(), *args], capture_output=True, check=False
         )
     except OSError as error:
         raise RuntimeError(f"herdr {' '.join(args)} could not be started: {error}")
@@ -69,7 +71,10 @@ def herdr_result(args: Sequence[str]) -> dict:
         raise RuntimeError(f"herdr {' '.join(args)} returned invalid JSON: {error}")
     result = payload.get("result") if isinstance(payload, dict) else None
     if not isinstance(result, dict):
-        raise RuntimeError(f"herdr {' '.join(args)} returned no result object")
+        # RuntimeError, not TypeError: every caller of this module catches
+        # RuntimeError to turn a Herdr failure into a line in the dashboard,
+        # and a payload without a result is exactly such a failure.
+        raise RuntimeError(f"herdr {' '.join(args)} returned no result object")  # noqa: TRY004
     return result
 
 

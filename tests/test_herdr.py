@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import unittest
+from typing import ClassVar
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -111,9 +112,9 @@ class HasForegroundCommandTest(unittest.TestCase):
 
 class HerdrCallTest(unittest.TestCase):
     def test_an_unreachable_binary_raises_runtime_error_not_oserror(self):
-        with patch.dict(os.environ, {"HERDR_BIN_PATH": "/nonexistent/herdr"}, clear=True):
-            with self.assertRaises(RuntimeError):
-                herdr_call(["pane", "list"])
+        with patch.dict(os.environ, {"HERDR_BIN_PATH": "/nonexistent/herdr"}, clear=True), \
+             self.assertRaises(RuntimeError):
+            herdr_call(["pane", "list"])
 
     def test_empty_stdout_on_success_is_not_a_failure(self):
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
@@ -122,7 +123,7 @@ class HerdrCallTest(unittest.TestCase):
 
 
 class TabCreateTest(unittest.TestCase):
-    RESULT = {"tab": {"tab_id": "w1:t7"}, "root_pane": {"pane_id": "w1:p7"}}
+    RESULT: ClassVar[dict] = {"tab": {"tab_id": "w1:t7"}, "root_pane": {"pane_id": "w1:p7"}}
 
     def test_returns_both_ids_from_the_response(self):
         with patch("run_targets.herdr.herdr_result", return_value=self.RESULT):
@@ -142,9 +143,9 @@ class TabCreateTest(unittest.TestCase):
             {"tab": {"tab_id": ""}, "root_pane": {"pane_id": "w1:p7"}},
             {"tab": "w1:t7", "root_pane": {"pane_id": "w1:p7"}},
         ):
-            with patch("run_targets.herdr.herdr_result", return_value=payload):
-                with self.assertRaises(RuntimeError):
-                    tab_create("w1", "api")
+            with patch("run_targets.herdr.herdr_result", return_value=payload), \
+                 self.assertRaises(RuntimeError):
+                tab_create("w1", "api")
 
     def test_raises_when_the_root_pane_id_is_missing_or_unusable(self):
         for payload in (
@@ -152,9 +153,9 @@ class TabCreateTest(unittest.TestCase):
             {"tab": {"tab_id": "w1:t7"}, "root_pane": {}},
             {"tab": {"tab_id": "w1:t7"}, "root_pane": {"pane_id": 7}},
         ):
-            with patch("run_targets.herdr.herdr_result", return_value=payload):
-                with self.assertRaises(RuntimeError):
-                    tab_create("w1", "api")
+            with patch("run_targets.herdr.herdr_result", return_value=payload), \
+                 self.assertRaises(RuntimeError):
+                tab_create("w1", "api")
 
 
 class TabFocusTest(unittest.TestCase):

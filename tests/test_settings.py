@@ -126,9 +126,9 @@ class TabLabelTest(unittest.TestCase):
 
 class LoadSettingsTest(unittest.TestCase):
     def test_a_missing_file_is_the_normal_case(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, {"HERDR_PLUGIN_CONFIG_DIR": directory}, clear=False):
-                settings, warnings = load_settings()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {"HERDR_PLUGIN_CONFIG_DIR": directory}, clear=False):
+            settings, warnings = load_settings()
         self.assertEqual(settings, Settings())
         self.assertEqual(warnings, [])
 

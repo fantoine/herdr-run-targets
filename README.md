@@ -255,9 +255,11 @@ herdr plugin log list --plugin fantoine.run-targets --limit 20
 
 ```bash
 python3 -m unittest discover -s tests -v
+uvx ruff check .
 ```
 
-Standard library only; nothing to install.
+Standard library only; nothing to install. The lint is clean with ruff's
+defaults — no configuration file, so any recent version applies the same rules.
 
 ## License
 

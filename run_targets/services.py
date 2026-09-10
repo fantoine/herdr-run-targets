@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from .config import Target
 from .settings import FOCUS_FIRST, FOCUS_LAST, Settings, tab_label

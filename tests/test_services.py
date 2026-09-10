@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from run_targets.config import Target
 from run_targets.services import (
     EXITED,
     GONE,
@@ -29,24 +30,23 @@ from run_targets.services import (
     restart_blocked_message,
     skip_message,
 )
-from run_targets.config import Target
 from run_targets.settings import FOCUS_FIRST, FOCUS_LAST, FOCUS_STAY, Settings
 from run_targets.state import ServiceRecord, WorkspaceRecord
 from run_targets.tui import (
+    MODE_MULTI,
+    MODE_SIMPLE,
     NAME_WIDTH_MAX,
     NAME_WIDTH_MIN,
+    empty_text,
     footer_items,
     footer_lines,
     footer_rows,
-    item_text,
-    name_column,
-    use_terminal_colors,
-    MODE_MULTI,
-    MODE_SIMPLE,
-    empty_text,
     footer_text,
     format_row,
     header_text,
+    item_text,
+    name_column,
+    use_terminal_colors,
     visible_lines,
 )
 
@@ -376,7 +376,7 @@ class ApplyActionTest(unittest.TestCase):
             )
         ]
         act("start", views, record, client)
-        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        created = next(call for call in client.calls if call[0] == "tab_create")
         self.assertEqual(created[3], os.path.join("/repo", "apps/web"))
 
     def test_a_target_env_reaches_the_new_tab(self):
@@ -391,7 +391,7 @@ class ApplyActionTest(unittest.TestCase):
             )
         ]
         act("start", views, record, client)
-        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        created = next(call for call in client.calls if call[0] == "tab_create")
         self.assertEqual(created[4], {"PORT": "3000"})
 
     def test_a_failed_start_still_tracks_the_tab_it_created(self):
@@ -449,7 +449,7 @@ class ServiceTabNamingTest(unittest.TestCase):
         record = WorkspaceRecord("w1:p1", {})
         client = FakeClient(panes={"w1:p1"})
         act("start", [view(IDLE, "api")], record, client)
-        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        created = next(call for call in client.calls if call[0] == "tab_create")
         self.assertEqual(created[2], "api")
 
     def test_the_configured_prefix_and_suffix_are_applied(self):
@@ -462,7 +462,7 @@ class ServiceTabNamingTest(unittest.TestCase):
             client,
             settings=Settings(label_prefix="run:", label_suffix="!"),
         )
-        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        created = next(call for call in client.calls if call[0] == "tab_create")
         self.assertEqual(created[2], "run:api!")
 
     def test_the_label_is_set_at_creation_not_renamed_afterwards(self):
@@ -678,7 +678,7 @@ class FooterItemsTest(unittest.TestCase):
         self.assertEqual((kind, key, description), ("chip", "SIMPLE", ""))
 
     def test_every_action_carries_its_key_and_description(self):
-        items = dict((key, description) for _, key, description in footer_items(MODE_MULTI))
+        items = {key: description for _, key, description in footer_items(MODE_MULTI)}
         self.assertEqual(items["s"], "stop")
         self.assertEqual(items["esc"], "cancel")
         self.assertEqual(items["space"], "select")
