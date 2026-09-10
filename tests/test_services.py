@@ -33,7 +33,13 @@ from run_targets.config import Target
 from run_targets.settings import FOCUS_FIRST, FOCUS_LAST, FOCUS_STAY, Settings
 from run_targets.state import ServiceRecord, WorkspaceRecord
 from run_targets.tui import (
+    NAME_WIDTH_MAX,
+    NAME_WIDTH_MIN,
+    footer_items,
     footer_lines,
+    footer_rows,
+    item_text,
+    name_column,
     use_terminal_colors,
     MODE_MULTI,
     MODE_SIMPLE,
@@ -615,19 +621,105 @@ class FormatRowTest(unittest.TestCase):
         self.assertIn("community-s running", row)
 
 
+class NameColumnTest(unittest.TestCase):
+    """The column follows the longest name: a floating dashboard has room a
+    docked column did not."""
+
+    def test_short_names_keep_the_floor(self):
+        self.assertEqual(name_column(["api", "web"], MODE_SIMPLE), NAME_WIDTH_MIN)
+
+    def test_it_aligns_on_the_longest_name_plus_a_space(self):
+        names = ["api", "community-sdk-playground-v2"]
+        self.assertEqual(name_column(names, MODE_SIMPLE), len(names[1]) + 1)
+
+    def test_a_very_long_name_is_capped(self):
+        self.assertEqual(name_column(["x" * 80], MODE_SIMPLE), NAME_WIDTH_MAX)
+
+    def test_a_narrow_pane_takes_the_column_back(self):
+        """The state column matters more than a name shown in full."""
+        names = ["community-sdk-playground-v2"]
+        self.assertLess(name_column(names, MODE_SIMPLE, 30), name_column(names, MODE_SIMPLE))
+
+    def test_the_checkboxes_are_paid_for_out_of_the_name_column(self):
+        names = ["community-sdk-playground-v2"]
+        self.assertLess(
+            name_column(names, MODE_MULTI, 40), name_column(names, MODE_SIMPLE, 40)
+        )
+
+    def test_a_narrow_pane_never_goes_below_the_floor(self):
+        self.assertEqual(name_column(["x" * 80], MODE_MULTI, 20), NAME_WIDTH_MIN)
+
+    def test_no_targets_still_yields_a_usable_column(self):
+        self.assertEqual(name_column([], MODE_SIMPLE), NAME_WIDTH_MIN)
+
+    def test_the_row_uses_the_column_it_is_given(self):
+        row = format_row(
+            ServiceView(
+                target=Target("community-web", "cmd", cwd=None, env={}, origin="team"),
+                state=RUNNING,
+                tab_id=None,
+                pane_id=None,
+            ),
+            checked=False,
+            cursor=False,
+            mode=MODE_SIMPLE,
+            name_width=20,
+        )
+        self.assertIn("community-web", row)
+        self.assertIn("community-web       running", row)
+
+
+class FooterItemsTest(unittest.TestCase):
+    """Blocks are typed so the renderer can paint a key louder than its
+    description; a flat string gave every part the same weight."""
+
+    def test_the_mode_is_a_chip_and_comes_first(self):
+        kind, key, description = footer_items(MODE_SIMPLE)[0]
+        self.assertEqual((kind, key, description), ("chip", "SIMPLE", ""))
+
+    def test_every_action_carries_its_key_and_description(self):
+        items = dict((key, description) for _, key, description in footer_items(MODE_MULTI))
+        self.assertEqual(items["s"], "stop")
+        self.assertEqual(items["esc"], "cancel")
+        self.assertEqual(items["space"], "select")
+
+    def test_a_chip_renders_without_a_trailing_space(self):
+        self.assertEqual(item_text(("chip", "MULTI", "")), "MULTI")
+
+    def test_the_local_legend_is_a_block_like_any_other(self):
+        self.assertIn(("key", "*", "local"), footer_items(MODE_SIMPLE, has_local=True))
+        self.assertNotIn(("key", "*", "local"), footer_items(MODE_SIMPLE))
+
+
+class FooterRowsTest(unittest.TestCase):
+    def test_a_wide_pane_keeps_every_block_on_one_line(self):
+        rows = footer_rows(footer_items(MODE_MULTI), 120)
+        self.assertEqual(len(rows), 1)
+
+    def test_wrapping_never_splits_a_block(self):
+        items = footer_items(MODE_MULTI, has_local=True)
+        rows = footer_rows(items, 40)
+        self.assertGreater(len(rows), 1)
+        self.assertEqual([item for row in rows for item in row], list(items))
+
+    def test_a_block_wider_than_the_pane_takes_its_line_alone(self):
+        rows = footer_rows(footer_items(MODE_MULTI), 4)
+        self.assertTrue(all(len(row) == 1 for row in rows))
+
+
 class FooterTextTest(unittest.TestCase):
     def test_simple_mode_advertises_the_actions_and_the_way_into_multi(self):
         """The action keys are reachable straight from the list: handling one
         service must not require entering a second mode first."""
         self.assertEqual(
             footer_text(MODE_SIMPLE),
-            "SIMPLE  enter start  s stop  r restart  x close  space multi  q close",
+            "SIMPLE   enter start   s stop   r restart   x close   space multi   q close",
         )
 
     def test_multi_mode_advertises_the_same_actions_plus_selection(self):
         self.assertEqual(
             footer_text(MODE_MULTI),
-            "MULTI  space select  enter start  s stop  r restart  x close  esc cancel",
+            "MULTI   space select   enter start   s stop   r restart   x close   esc cancel",
         )
 
     def test_only_simple_mode_advertises_closing_the_dashboard(self):
@@ -879,16 +971,28 @@ class TerminalColorsTest(unittest.TestCase):
         import curses
 
         with patch.object(curses, "start_color") as start, \
-             patch.object(curses, "use_default_colors") as default:
-            use_terminal_colors()
+             patch.object(curses, "use_default_colors") as default, \
+             patch.object(curses, "init_pair") as pair:
+            self.assertTrue(use_terminal_colors())
         start.assert_called_once()
         default.assert_called_once()
+        self.assertEqual(pair.call_count, 2)
 
     def test_a_terminal_without_colours_is_not_fatal(self):
         import curses
 
         with patch.object(curses, "start_color", side_effect=curses.error("no colour")):
-            use_terminal_colors()
+            self.assertFalse(use_terminal_colors())
+
+    def test_a_terminal_with_no_pairs_to_give_is_not_fatal(self):
+        """`init_pair` raises ValueError, not curses.error, when there is no
+        pair to allocate -- a monochrome footer is still a footer."""
+        import curses
+
+        with patch.object(curses, "start_color"), \
+             patch.object(curses, "use_default_colors"), \
+             patch.object(curses, "init_pair", side_effect=ValueError("no pairs")):
+            self.assertFalse(use_terminal_colors())
 
 
 class FooterLinesTest(unittest.TestCase):

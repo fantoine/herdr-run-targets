@@ -5,6 +5,7 @@ from __future__ import annotations
 import curses
 import os
 import time
+from typing import Sequence
 
 from . import herdr
 from .config import ORIGIN_LOCAL, load_run_config
@@ -25,27 +26,51 @@ REFRESH_SECONDS = 1.0
 # expiry, a single "skipped" would hide them forever.
 MESSAGE_SECONDS = 6.0
 
-NAME_WIDTH = 12
+NAME_WIDTH_MIN = 12
+NAME_WIDTH_MAX = 40
 STATE_WIDTH = 8
 LOCAL_MARKER = " *"
 SMALL_SCREEN_TEXT = "Too small - q to close"
+CHECKBOX_WIDTH = 4
+MARKER_WIDTH = 2
 
 
-def format_row(view: ServiceView, checked: bool, cursor: bool, mode: str) -> str:
-    """One row of the table, as plain text so it stays testable.
+def name_column(names: Sequence[str], mode: str, width: int | None = None) -> int:
+    """How wide the name column should be for these targets.
 
-    The columns are sized so a complete row fits in the dashboard's minimum 30
-    characters: beyond that, the origin marker was the first thing to disappear,
-    and with it the promise that "a different command is never a mystery".
+    Aligned on the longest name rather than fixed: a floating dashboard has room
+    a docked column did not. Capped at `NAME_WIDTH_MAX` so one very long name
+    cannot push the state off screen, and never narrower than
+    `NAME_WIDTH_MIN` -- a pane too narrow for that has the row sliced, which is
+    what the too-small notice is for.
+
+    The extra character keeps a space between the longest name and the state.
     """
+    longest = max((len(name) for name in names), default=0)
+    column = min(NAME_WIDTH_MAX, max(NAME_WIDTH_MIN, longest + 1))
+    if width is not None:
+        overhead = MARKER_WIDTH + (CHECKBOX_WIDTH if mode == MODE_MULTI else 0)
+        room = width - overhead - STATE_WIDTH - len(LOCAL_MARKER)
+        column = max(NAME_WIDTH_MIN, min(column, room))
+    return column
+
+
+def format_row(
+    view: ServiceView,
+    checked: bool,
+    cursor: bool,
+    mode: str,
+    name_width: int = NAME_WIDTH_MIN,
+) -> str:
+    """One row of the table, as plain text so it stays testable."""
     marker = ">" if cursor else " "
     box = ("[x] " if checked else "[ ] ") if mode == MODE_MULTI else ""
     origin = LOCAL_MARKER if view.target.origin == ORIGIN_LOCAL else ""
     # One character short of the column, so a name that fills it still keeps a
     # space before the state: real target names ran to `community-sdk-playground`
     # and printed `community-sdidle`.
-    name = view.target.name[: NAME_WIDTH - 1]
-    return f"{marker} {box}{name:<{NAME_WIDTH}}{view.state:<{STATE_WIDTH}}{origin}"
+    name = view.target.name[: name_width - 1]
+    return f"{marker} {box}{name:<{name_width}}{view.state:<{STATE_WIDTH}}{origin}"
 
 
 def header_text(repo_root: str) -> str:
@@ -83,69 +108,97 @@ def visible_lines(
     return kept
 
 
-def footer_text(mode: str, has_local: bool = False) -> str:
-    """The help bar, which changes with the mode."""
-    return "  ".join(footer_segments(mode, has_local))
+# Three spaces between blocks, one inside a block: the gap that separates two
+# shortcuts has to read as wider than the gap between a key and what it does,
+# or the bar becomes a word soup.
+BLOCK_GAP = "   "
+
+# Item kinds, so the renderer knows what to paint each part as.
+CHIP = "chip"
+KEY = "key"
 
 
-def footer_segments(mode: str, has_local: bool = False) -> list[str]:
-    """The footer's items, each unbreakable.
+def footer_items(mode: str, has_local: bool = False) -> list[tuple[str, str, str]]:
+    """The footer's blocks, as (kind, key, description).
 
-    Keeping them separate lets the bar wrap without ever cutting a key in two.
-
-    The `* local` legend is the only column marker the table explains, because
-    it is the only one that needs it: a name and a state read themselves, a bare
-    asterisk does not. It appears only when a local target is on screen, and it
-    lives in the footer rather than in a header row -- a header would cost a
-    line of a popup that is 40% of the window tall, and would still leave the
-    asterisk unexplained.
+    Structured rather than pre-joined so the renderer can paint the mode chip,
+    the keys and their descriptions differently -- a flat string gave every
+    part the same weight, and telling which key went with which action meant
+    counting spaces.
     """
     if mode == MODE_MULTI:
-        segments = [
-            "MULTI",
-            "space select",
-            "enter start",
-            "s stop",
-            "r restart",
-            "x close",
-            "esc cancel",
+        items = [
+            (CHIP, "MULTI", ""),
+            (KEY, "space", "select"),
+            (KEY, "enter", "start"),
+            (KEY, "s", "stop"),
+            (KEY, "r", "restart"),
+            (KEY, "x", "close"),
+            (KEY, "esc", "cancel"),
         ]
     else:
-        segments = [
-            "SIMPLE",
-            "enter start",
-            "s stop",
-            "r restart",
-            "x close",
-            "space multi",
-            "q close",
+        items = [
+            (CHIP, "SIMPLE", ""),
+            (KEY, "enter", "start"),
+            (KEY, "s", "stop"),
+            (KEY, "r", "restart"),
+            (KEY, "x", "close"),
+            (KEY, "space", "multi"),
+            (KEY, "q", "close"),
         ]
     if has_local:
-        segments.append("* local")
-    return segments
+        # The only column marker the table explains, because it is the only one
+        # that needs it: a name and a state read themselves, a bare asterisk
+        # does not. In the footer rather than a header row, which would cost a
+        # line of a popup 40% of the window tall.
+        items.append((KEY, "*", "local"))
+    return items
+
+
+def item_text(item: tuple[str, str, str]) -> str:
+    """One block as plain text: `esc cancel`, or the bare chip."""
+    _, key, description = item
+    return f"{key} {description}" if description else key
+
+
+def footer_rows(
+    items: Sequence[tuple[str, str, str]], width: int
+) -> list[list[tuple[str, str, str]]]:
+    """Wrap the blocks over as many lines as the width demands.
+
+    Truncating hid `s stop`, `r restart` and `x close` as soon as the pane was
+    narrow: an invisible key does not exist for whoever needs it. A block wider
+    than the pane takes its line alone rather than being cut.
+    """
+    rows: list[list[tuple[str, str, str]]] = []
+    current: list[tuple[str, str, str]] = []
+    used = 0
+    for item in items:
+        length = len(item_text(item))
+        if not current:
+            current, used = [item], length
+        elif used + len(BLOCK_GAP) + length <= width:
+            current.append(item)
+            used += len(BLOCK_GAP) + length
+        else:
+            rows.append(current)
+            current, used = [item], length
+    if current:
+        rows.append(current)
+    return rows
+
+
+def footer_text(mode: str, has_local: bool = False) -> str:
+    """The help bar as one line of plain text, for tests and narrow renders."""
+    return BLOCK_GAP.join(item_text(item) for item in footer_items(mode, has_local))
 
 
 def footer_lines(mode: str, width: int, has_local: bool = False) -> list[str]:
-    """Wrap the footer over as many lines as the width demands.
-
-    Truncating hid `s stop`, `r restart` and `x close` as soon as one service
-    shared the tab: an invisible key does not exist for whoever needs it. An
-    item wider than the pane takes its line alone rather than being cut -- it
-    will overflow, but stays identifiable.
-    """
-    lines: list[str] = []
-    current = ""
-    for segment in footer_segments(mode, has_local):
-        if not current:
-            current = segment
-        elif len(current) + 2 + len(segment) <= width:
-            current = f"{current}  {segment}"
-        else:
-            lines.append(current)
-            current = segment
-    if current:
-        lines.append(current)
-    return lines
+    """The wrapped help bar, as plain text lines."""
+    return [
+        BLOCK_GAP.join(item_text(item) for item in row)
+        for row in footer_rows(footer_items(mode, has_local), width)
+    ]
 
 
 class Dashboard:
@@ -260,25 +313,89 @@ class Dashboard:
         self.tick()
 
 
-def use_terminal_colors() -> None:
-    """Let the pane keep the terminal's own background.
+PAIR_KEY = 1
+PAIR_CHIP = 2
+
+
+def use_terminal_colors() -> bool:
+    """Let the pane keep the terminal's own background, and set up the footer.
 
     `curses.wrapper` starts colour but not `use_default_colors`, so pair 0
     resolves to ncurses' own black-on-white instead of staying transparent --
     the pane then paints a grey block over a themed background, which reads as
     a foreign pane. A terminal without colour support raises here, and having
-    no colours is not a reason to refuse to draw.
+    no colours is not a reason to refuse to draw: it only means the footer falls
+    back to bold and dim.
+
+    Returns whether colour is available.
     """
     try:
         curses.start_color()
         curses.use_default_colors()
-    except curses.error:
-        pass
+        # -1 is the terminal's own background, kept by use_default_colors.
+        curses.init_pair(PAIR_KEY, curses.COLOR_CYAN, -1)
+        curses.init_pair(PAIR_CHIP, curses.COLOR_CYAN, -1)
+    except (curses.error, ValueError):
+        # A terminal with no colour pairs to hand out raises ValueError here
+        # rather than curses.error, and a monochrome footer is still a footer.
+        return False
+    return True
+
+
+def key_attributes(colored: bool) -> tuple[int, int, int]:
+    """Attributes for (chip, key, description).
+
+    The key has to be the loudest part of a block and its description the
+    quietest, otherwise the eye cannot pair them: everything at one weight is
+    what made the bar unreadable.
+    """
+    if colored:
+        chip = curses.color_pair(PAIR_CHIP) | curses.A_REVERSE | curses.A_BOLD
+        key = curses.color_pair(PAIR_KEY) | curses.A_BOLD
+    else:
+        chip = curses.A_REVERSE | curses.A_BOLD
+        key = curses.A_BOLD
+    return chip, key, curses.A_DIM
+
+
+def draw_footer_row(
+    stdscr, row_index: int, items: Sequence[tuple[str, str, str]], width: int, colored: bool
+) -> None:
+    """Paint one footer line block by block, clipping at the pane's edge."""
+    chip_attribute, key_attribute, text_attribute = key_attributes(colored)
+    column = 0
+    for position, (kind, key, description) in enumerate(items):
+        if position:
+            column += len(BLOCK_GAP)
+        if kind == CHIP:
+            label = f" {key} "
+            if column + len(label) >= width:
+                return
+            stdscr.addstr(row_index, column, label, chip_attribute)
+            column += len(label)
+            continue
+        if column + len(key) >= width:
+            return
+        stdscr.addstr(row_index, column, key, key_attribute)
+        column += len(key)
+        if description:
+            remaining = width - column - 2
+            if remaining <= 0:
+                return
+            stdscr.addstr(row_index, column, f" {description}"[:remaining], text_attribute)
+            column += 1 + len(description)
 
 
 def run_dashboard(stdscr, dashboard: Dashboard) -> None:
     """Rendering and keyboard loop."""
-    use_terminal_colors()
+    colored = use_terminal_colors()
+    # ncurses waits a full second on a bare escape, in case it opens a longer
+    # sequence. `esc` is how multi-select mode is cancelled, and a mode that
+    # takes a second to leave feels broken.
+    try:
+        curses.set_escdelay(25)
+    except (AttributeError, curses.error):
+        pass
     curses.curs_set(0)
     stdscr.nodelay(True)
     last_refresh = 0.0
@@ -326,8 +443,12 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         has_local = any(
             view.target.origin == ORIGIN_LOCAL for view in dashboard.views
         )
-        footer_height = len(footer_lines(dashboard.mode, max(1, width - 1), has_local))
-        rows_capacity = max(0, height - 3 - footer_height)
+        items = footer_items(dashboard.mode, has_local)
+        footer = footer_rows(items, max(1, width - 1))
+        rows_capacity = max(0, height - 3 - len(footer))
+        column = name_column(
+            [view.target.name for view in dashboard.views], dashboard.mode, width - 1
+        )
         used = 0
         for index, view in enumerate(dashboard.views[:rows_capacity]):
             row = format_row(
@@ -335,6 +456,7 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
                 checked=view.target.name in dashboard.checked,
                 cursor=index == dashboard.cursor,
                 mode=dashboard.mode,
+                name_width=column,
             )
             stdscr.addstr(index + 2, 0, row[: width - 1])
             used = index + 1
@@ -343,16 +465,14 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             stdscr.addstr(2, 0, empty_text(dashboard.repo_root)[: width - 1])
             used = 1
 
-        footer = footer_lines(dashboard.mode, max(1, width - 1), has_local)
         footer_top = height - len(footer)
         lines = visible_lines(
             dashboard.messages, dashboard.warnings, max(0, footer_top - 2 - used)
         )
         for offset, line in enumerate(lines):
             stdscr.addstr(footer_top - len(lines) + offset, 0, line[: width - 1])
-        attribute = curses.A_REVERSE if dashboard.mode == MODE_MULTI else curses.A_DIM
-        for offset, line in enumerate(footer):
-            stdscr.addstr(footer_top + offset, 0, line[: width - 1], attribute)
+        for offset, row in enumerate(footer):
+            draw_footer_row(stdscr, footer_top + offset, row, width, colored)
         stdscr.refresh()
 
         key = stdscr.getch()

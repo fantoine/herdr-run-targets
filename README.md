@@ -42,7 +42,7 @@ RUN TARGETS  my-project
 > api         idle
   web         idle
 
-SIMPLE  enter start  s stop  r restart  x close  space multi  q close
+SIMPLE   enter start   s stop   r restart   x close   space multi   q close
 ```
 
 Press `space` on each, then `enter`. Two tabs appear, each named after its
@@ -221,6 +221,10 @@ own, so the key brings it straight back.
 **The action keys act immediately**, with no confirmation: `x` on the row under
 the cursor closes that service's tab. Its output goes with the tab, so reach for
 `s` when you still want to read it.
+
+**The name column follows your longest target name**, up to 40 characters, and
+gives room back to the state column in a narrow pane. Names can be as long as
+they read well.
 
 **Restarting waits for the service to actually stop**, up to three seconds. A
 service that ignores the interrupt is left alone rather than being sent a
