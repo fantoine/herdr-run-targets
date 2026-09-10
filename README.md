@@ -5,7 +5,7 @@
 
   **Every dev service your repo declares, one keypress away.**
 
-  ![version](https://img.shields.io/badge/version-0.2.0-2B8ABF)
+  ![version](https://img.shields.io/badge/version-0.2.1-2B8ABF)
   ![license](https://img.shields.io/badge/license-MIT-blue)
   ![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.2-4AABDF)
 </div>
