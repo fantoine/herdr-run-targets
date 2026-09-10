@@ -5,17 +5,18 @@
 
   **Every dev service your repo declares, one keypress away.**
 
-  ![version](https://img.shields.io/badge/version-0.1.0-2B8ABF)
+  ![version](https://img.shields.io/badge/version-0.2.0-2B8ABF)
   ![license](https://img.shields.io/badge/license-MIT-blue)
   ![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.2-4AABDF)
 </div>
 
 ---
 
-Run Targets turns the services a repository declares into a dashboard you keep
-open: a pane on the left listing every target and its state, a column of service
-panes on the right. Launch several at once, then stop, restart or close them one
-by one — without retyping a command or hunting for the right pane.
+Run Targets turns the services a repository declares into a dashboard you call
+up with a keypress: a floating pane listing every target and its state, and one
+named tab per running service. Launch several at once, then stop, restart or
+remove them one by one — without retyping a command or hunting for the right
+tab.
 
 <details>
 <summary><strong>Example: bringing a project up in the morning</strong></summary>
@@ -33,7 +34,7 @@ name = "web"
 command = "yarn nx serve web"
 ```
 
-Press your key. A tab named `run` opens with the dashboard:
+Press your key. The dashboard floats over the pane you were on:
 
 ```
 RUN TARGETS  my-project
@@ -44,19 +45,16 @@ RUN TARGETS  my-project
 VIEW  e edit  q close
 ```
 
-Press `e`, `space` on each, then `enter`. Two panes appear beside the dashboard,
-each named after its target:
+Press `e`, `space` on each, then `enter`. Two tabs appear, each named after its
+target:
 
 ```
-RUN TARGETS  my-project
-
-  api         running
-> web         running
+[ 1 ] [ api ] [ web ]
 ```
 
-An hour later the API needs a restart after a config change. Cursor on `api`,
-then `e` `r`. It stops, restarts in the same pane, and the previous output is
-still above it.
+An hour later the API needs a restart after a config change. Call the dashboard
+back up, cursor on `api`, then `e` `r`. It stops, restarts in the same tab, and
+the previous output is still above it.
 
 </details>
 
@@ -148,11 +146,35 @@ The dashboard starts read only — press `e` before anything can act on a servic
 | `enter` | start |
 | `s` | stop |
 | `r` | restart |
-| `x` | close the service's pane |
+| `x` | close the service's tab |
 | `esc` | uncheck everything, back to view mode |
 
 An action applies to every checked row, or to the row under the cursor when
 nothing is checked. Check several and start, stop or restart them in one press.
+
+## ⚙️ Settings
+
+Optional, in the plugin's own config directory — `herdr plugin config-dir
+fantoine.run-targets` prints it:
+
+```toml
+# config.toml
+[tabs]
+label_prefix = ""      # e.g. "run:" to spot the plugin's tabs at a glance
+label_suffix = ""
+
+[dashboard]
+focus_mode = "stay"    # stay | first | last
+```
+
+| Setting | Effect |
+| --- | --- |
+| `label_prefix` / `label_suffix` | Wrap the target's name in the tab label. Applied when the tab is created, so changing them leaves existing tabs alone |
+| `focus_mode` | Where the focus goes after a batch launch: `stay` on the dashboard, or the `first` / `last` tab of the batch |
+
+Edits take effect on the next launch — no dashboard restart. A value the plugin
+does not understand is reported in the dashboard's footer rather than applied
+silently.
 
 ## 📊 States
 
@@ -160,9 +182,9 @@ nothing is checked. Check several and start, stop or restart them in one press.
 | --- | --- |
 | `running` | the service is up |
 | `stopped` | you stopped it from the dashboard |
-| `exited` | it stopped on its own — go read its pane |
+| `exited` | it stopped on its own — go read its tab |
 | `idle` | not started yet |
-| `gone` | its pane was closed |
+| `gone` | its tab was closed |
 
 ## ⚠️ Worth knowing
 
@@ -170,8 +192,15 @@ nothing is checked. Check several and start, stop or restart them in one press.
 with the repository: give it the same trust you give a `Makefile` in a fresh
 clone.
 
-**Stopping keeps the pane and its output.** A server that just crashed keeps its
-logs on screen, and restarting reuses the same pane. `x` is what removes a pane.
+**The dashboard floats over the pane you are on.** Herdr opens an overlay on the
+active pane, so press the key from the workspace whose services you want to
+manage.
+
+**Stopping keeps the tab and its output.** A server that just crashed keeps its
+logs on screen, and restarting reuses the same tab. `x` is what removes a tab.
+
+**Closing the dashboard leaves every service running.** It owns no tab of its
+own, so the key brings it straight back.
 
 **An action with nothing to do says so** rather than failing silently — pressing
 `s` on a stopped service prints `api: already stopped, stop skipped`.
@@ -180,12 +209,8 @@ logs on screen, and restarting reuses the same pane. `x` is what removes a pane.
 service that ignores the interrupt is left alone rather than being sent a
 command it cannot read.
 
-**Closing the dashboard with nothing running closes its tab.** With services
-still up, only the dashboard pane goes and the key brings it back in place.
-Careful: Herdr closes a workspace along with its last tab.
-
-**The service column gets cramped past two or three services** — panes are added
-by splitting, so you will want to drag the dividers yourself.
+**Closing a service's tab by hand is fine.** The dashboard shows it as `gone`,
+and `x` then just forgets it.
 
 ## 🩺 Troubleshooting
 
@@ -198,8 +223,9 @@ herdr plugin log list --plugin fantoine.run-targets --limit 20
 | `No targets in <repository>. Add .herdr-run.toml or .herdr-run.local.toml` | No configuration was found. If the repository name is not the one you expected, the dashboard opened on the wrong directory. |
 | `<file>: invalid TOML (...)` | Fix the syntax; the other file still applies meanwhile. |
 | `<file>: target 'x' has an unsafe cwd; skipped` | `cwd` must stay inside the repository — no absolute path, no `..`. |
-| `<name>: still running after stop, restart skipped` | The service ignored the interrupt. Stop it yourself in its pane, then start it again. |
-| `<name>: no pane of ours to split from` | The dashboard pane is gone. Press the key twice to bring it back. |
+| `config.toml: unknown focus_mode '...'` | Use `stay`, `first` or `last`. |
+| `<name>: still running after stop, restart skipped` | The service ignored the interrupt. Stop it yourself in its tab, then start it again. |
+| `<name>: herdr tab create failed: ...` | Herdr refused the tab. The message is its own; the service was not started and nothing was recorded. |
 | `... is not inside a git repository.` | Open the dashboard from a directory inside your project. |
 
 ## 🧪 Development
