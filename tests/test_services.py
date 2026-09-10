@@ -34,6 +34,7 @@ from run_targets.settings import FOCUS_FIRST, FOCUS_LAST, FOCUS_STAY, Settings
 from run_targets.state import ServiceRecord, WorkspaceRecord
 from run_targets.tui import (
     footer_lines,
+    use_terminal_colors,
     MODE_EDIT,
     MODE_VIEW,
     empty_text,
@@ -779,6 +780,25 @@ class DashboardTickTest(unittest.TestCase):
             self.assertEqual(
                 dashboard.messages, ["herdr pane list failed: socket closed"]
             )
+
+
+class TerminalColorsTest(unittest.TestCase):
+    """The pane must not paint its own background over the terminal's theme."""
+
+    def test_it_asks_curses_for_the_default_colours(self):
+        import curses
+
+        with patch.object(curses, "start_color") as start, \
+             patch.object(curses, "use_default_colors") as default:
+            use_terminal_colors()
+        start.assert_called_once()
+        default.assert_called_once()
+
+    def test_a_terminal_without_colours_is_not_fatal(self):
+        import curses
+
+        with patch.object(curses, "start_color", side_effect=curses.error("no colour")):
+            use_terminal_colors()
 
 
 class FooterLinesTest(unittest.TestCase):

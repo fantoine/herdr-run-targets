@@ -221,8 +221,25 @@ class Dashboard:
         self.tick()
 
 
+def use_terminal_colors() -> None:
+    """Let the pane keep the terminal's own background.
+
+    `curses.wrapper` starts colour but not `use_default_colors`, so pair 0
+    resolves to ncurses' own black-on-white instead of staying transparent --
+    the pane then paints a grey block over a themed background, which reads as
+    a foreign pane. A terminal without colour support raises here, and having
+    no colours is not a reason to refuse to draw.
+    """
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+    except curses.error:
+        pass
+
+
 def run_dashboard(stdscr, dashboard: Dashboard) -> None:
     """Rendering and keyboard loop."""
+    use_terminal_colors()
     curses.curs_set(0)
     stdscr.nodelay(True)
     last_refresh = 0.0
