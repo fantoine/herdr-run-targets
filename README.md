@@ -42,7 +42,7 @@ RUN TARGETS  my-project
 > api         idle
   web         idle
 
-SIMPLE   enter start   s stop   r restart   x close   space multi   q close
+SIMPLE   enter start   s stop   r restart   x close   space multi   esc close
 ```
 
 Press `space` on each, then `enter`. Two tabs appear, each named after its
@@ -143,13 +143,13 @@ The action keys are the same in both modes; what changes is what they apply to.
 | `r` | restart it |
 | `x` | close its tab |
 | `space` | check it — this is what enters multi-select |
-| `q` | close the dashboard |
+| `esc` / `q` | close the dashboard |
 
 | Multi-select mode | |
 | --- | --- |
 | `space` | check / uncheck; unchecking the last row leaves the mode |
 | `enter` `s` `r` `x` | apply to every checked row |
-| `esc` | uncheck everything, back to simple mode |
+| `esc` | uncheck everything, back to simple mode — press it again to close |
 
 So one service is handled straight from the list, and a batch is one `space`
 away. An action applies to the checked rows when there are any, and to the row

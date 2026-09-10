@@ -144,7 +144,7 @@ def footer_items(mode: str, has_local: bool = False) -> list[tuple[str, str, str
             (KEY, "r", "restart"),
             (KEY, "x", "close"),
             (KEY, "space", "multi"),
-            (KEY, "q", "close"),
+            (KEY, "esc", "close"),
         ]
     if has_local:
         # The only column marker the table explains, because it is the only one
@@ -259,6 +259,19 @@ class Dashboard:
         """Drop the whole selection and fall back to the single-target mode."""
         self.checked.clear()
         self.mode = MODE_SIMPLE
+
+    def escape(self) -> bool:
+        """Back out one level. Returns whether the dashboard should close.
+
+        `esc` cancels a selection first and closes the dashboard only when
+        there is nothing left to cancel -- the same escalation as any nested
+        view. It used to close nothing at all in simple mode, because in the
+        first design it was the only way out of edit mode.
+        """
+        if self.mode == MODE_MULTI:
+            self.clear_selection()
+            return False
+        return True
 
     def set_messages(self, messages: list[str]) -> None:
         """Set the action messages, and the instant they went on screen."""
@@ -504,6 +517,9 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             # "these ones too", rather than a mode to enter before selecting.
             dashboard.toggle_check()
         elif key == 27:  # escape
-            dashboard.clear_selection()
+            if dashboard.escape():
+                return
         elif key == ord("q") and dashboard.mode == MODE_SIMPLE:
+            # Kept alongside `esc`: it is the TUI convention, and it was the
+            # only way out while `esc` meant "leave edit mode".
             return

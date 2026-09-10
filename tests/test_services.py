@@ -713,7 +713,7 @@ class FooterTextTest(unittest.TestCase):
         service must not require entering a second mode first."""
         self.assertEqual(
             footer_text(MODE_SIMPLE),
-            "SIMPLE   enter start   s stop   r restart   x close   space multi   q close",
+            "SIMPLE   enter start   s stop   r restart   x close   space multi   esc close",
         )
 
     def test_multi_mode_advertises_the_same_actions_plus_selection(self):
@@ -723,9 +723,10 @@ class FooterTextTest(unittest.TestCase):
         )
 
     def test_only_simple_mode_advertises_closing_the_dashboard(self):
-        """`q` would be a surprising way out with a batch checked."""
-        self.assertIn("q close", footer_text(MODE_SIMPLE))
-        self.assertNotIn("q close", footer_text(MODE_MULTI))
+        """With a batch checked, `esc` cancels the selection instead."""
+        self.assertIn("esc close", footer_text(MODE_SIMPLE))
+        self.assertIn("esc cancel", footer_text(MODE_MULTI))
+        self.assertNotIn("esc close", footer_text(MODE_MULTI))
 
     def test_a_local_target_gets_the_asterisk_explained(self):
         """The table has no header row, so a bare `*` says nothing on its own."""
@@ -915,6 +916,18 @@ class DashboardModeTest(unittest.TestCase):
         self.assertEqual(dashboard.checked, set())
         self.assertEqual(dashboard.mode, MODE_SIMPLE)
 
+    def test_escape_cancels_the_selection_before_closing_anything(self):
+        from run_targets.tui import MODE_SIMPLE
+
+        dashboard = self._dashboard()
+        dashboard.toggle_check()
+        self.assertFalse(dashboard.escape())
+        self.assertEqual(dashboard.checked, set())
+        self.assertEqual(dashboard.mode, MODE_SIMPLE)
+
+    def test_escape_with_nothing_selected_closes_the_dashboard(self):
+        self.assertTrue(self._dashboard().escape())
+
     def test_clearing_the_selection_returns_to_simple_mode(self):
         from run_targets.tui import MODE_SIMPLE
 
@@ -1006,7 +1019,7 @@ class FooterLinesTest(unittest.TestCase):
     def test_simple_mode_wraps_without_losing_a_key(self):
         lines = footer_lines(MODE_SIMPLE, 34)
         joined = " ".join(lines)
-        for key in ("enter start", "s stop", "r restart", "x close", "space multi", "q close"):
+        for key in ("enter start", "s stop", "r restart", "x close", "space multi", "esc close"):
             self.assertIn(key, joined)
 
     def test_a_narrow_pane_wraps_without_losing_a_key(self):
