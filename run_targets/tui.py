@@ -9,7 +9,13 @@ from collections.abc import Sequence
 
 from . import herdr
 from .config import ORIGIN_LOCAL, load_run_config
-from .services import ServiceView, apply_action, observe, resolve_selection
+from .services import (
+    ServiceView,
+    apply_action,
+    observe,
+    resolve_selection,
+    should_close_after,
+)
 from .settings import Settings, load_settings
 from .state import WorkspaceRecord, load_state, save_state
 
@@ -296,22 +302,27 @@ class Dashboard:
         except RuntimeError as error:
             self.set_messages([str(error)])
 
-    def act(self, action: str) -> None:
+    def act(self, action: str) -> bool:
+        """Apply an action to the selection. Returns whether to close.
+
+        Closing is a setting (`focus_mode = "close"`), not a behaviour: a
+        dashboard that vanishes is only welcome once the services are up and
+        there is nothing left to read.
+        """
         selected = resolve_selection(self.names(), self.checked, self.cursor_name())
         chosen = [view for view in self.views if view.target.name in selected]
         state = load_state()
         record = state.setdefault(self.workspace_id, WorkspaceRecord())
-        self.set_messages(
-            apply_action(
-                action,
-                chosen,
-                record,
-                self.repo_root,
-                self.workspace_id,
-                self.settings,
-                herdr,
-            )
+        outcome = apply_action(
+            action,
+            chosen,
+            record,
+            self.repo_root,
+            self.workspace_id,
+            self.settings,
+            herdr,
         )
+        self.set_messages(outcome.messages)
         save_state(state)
         self.checked.clear()
         # A batch is done once applied, so multi-select mode hands the keyboard
@@ -324,6 +335,12 @@ class Dashboard:
         # action's feedback: what the user needs to read first is that the
         # display is no longer trustworthy.
         self.tick()
+        # Decided before the refresh could add a message of its own, but read
+        # after it: a failed refresh has already replaced the feedback, and a
+        # dashboard that cannot be trusted is one to keep on screen.
+        return should_close_after(action, self.settings.focus_mode, outcome) and not (
+            self.messages
+        )
 
 
 PAIR_KEY = 1
@@ -505,13 +522,17 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         # The action keys are shared: in simple mode the selection is the row
         # under the cursor, in multi-select mode it is every checked row.
         elif key in (curses.KEY_ENTER, 10, 13):
-            dashboard.act("start")
+            if dashboard.act("start"):
+                return
         elif key == ord("s"):
-            dashboard.act("stop")
+            if dashboard.act("stop"):
+                return
         elif key == ord("r"):
-            dashboard.act("restart")
+            if dashboard.act("restart"):
+                return
         elif key == ord("x"):
-            dashboard.act("close")
+            if dashboard.act("close"):
+                return
         elif key == ord(" "):
             # Checking a row is what opens multi-select mode: one key for
             # "these ones too", rather than a mode to enter before selecting.

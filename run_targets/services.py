@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .config import Target
-from .settings import FOCUS_FIRST, FOCUS_LAST, Settings, tab_label
+from .settings import FOCUS_CLOSE, FOCUS_FIRST, FOCUS_LAST, Settings, tab_label
 from .state import ServiceRecord, WorkspaceRecord
 
 RUNNING = "running"
@@ -148,6 +148,35 @@ def skip_message(name: str, action: str, state: str) -> str:
     return f"{name}: already {state}, {action} skipped"
 
 
+# The actions that put a service back on its feet, and so the ones the
+# `close` focus mode reacts to. Stopping or removing a service leaves the
+# dashboard up: its state is exactly what you want to read afterwards.
+LAUNCHING_ACTIONS = ("start", "restart")
+
+
+@dataclass
+class ActionOutcome:
+    """What a batch did: what it has to say, and what it launched."""
+
+    messages: list[str]
+    launched: list[str]
+
+
+def should_close_after(action: str, mode: str, outcome: ActionOutcome) -> bool:
+    """Whether the dashboard should get out of the way once a batch has run.
+
+    Only after a launch, only in `close` mode, and only when the batch has
+    nothing to say: a skipped action or a failure is the one thing a closing
+    dashboard would take off screen before it was read.
+    """
+    return (
+        mode == FOCUS_CLOSE
+        and action in LAUNCHING_ACTIONS
+        and bool(outcome.launched)
+        and not outcome.messages
+    )
+
+
 @dataclass
 class ServiceView:
     """A target and what we observe of it right now."""
@@ -245,14 +274,15 @@ def apply_action(
     workspace_id: str,
     settings: Settings,
     client,
-) -> list[str]:
-    """Apply an action to a selection, and return the messages to display.
+) -> ActionOutcome:
+    """Apply an action to a selection, and report what happened.
 
     One failing target does not stop the ones after it: a half-started batch
     beats a batch abandoned on the first error.
     """
     messages: list[str] = []
     created: list[str] = []
+    launched: list[str] = []
     for view in views:
         operation = plan_action(action, view.state)
         name = view.target.name
@@ -265,8 +295,10 @@ def apply_action(
                         record, view, repo_root, workspace_id, settings, client
                     )
                 )
+                launched.append(name)
             elif operation == OP_START:
                 _start_in_pane(record, view, view.tab_id, view.pane_id, client)
+                launched.append(name)
             elif operation == OP_STOP:
                 client.pane_send_keys(view.pane_id, "ctrl+c")
                 service = record.services.get(name)
@@ -276,6 +308,7 @@ def apply_action(
                 client.pane_send_keys(view.pane_id, "ctrl+c")
                 if _wait_until_stopped(view.pane_id, client):
                     _start_in_pane(record, view, view.tab_id, view.pane_id, client)
+                    launched.append(name)
                 else:
                     messages.append(restart_blocked_message(name))
             elif operation == OP_CLOSE:
@@ -295,4 +328,4 @@ def apply_action(
             client.tab_focus(tab_id)
         except RuntimeError as error:
             messages.append(f"could not focus the tab: {error}")
-    return messages
+    return ActionOutcome(messages=messages, launched=launched)

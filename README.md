@@ -5,7 +5,7 @@
 
   **Every dev service your repo declares, one keypress away.**
 
-  ![version](https://img.shields.io/badge/version-0.2.1-2B8ABF)
+  ![version](https://img.shields.io/badge/version-0.3.0-2B8ABF)
   [![CI](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml/badge.svg)](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml)
   ![license](https://img.shields.io/badge/license-MIT-blue)
   ![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.2-4AABDF)
@@ -169,7 +169,7 @@ label_prefix = ""       # e.g. "run:" to spot the plugin's tabs at a glance
 label_suffix = ""
 
 [dashboard]
-focus_mode = "stay"     # stay | first | last
+focus_mode = "stay"     # stay | first | last | close
 placement = "overlay"   # overlay | popup
 popup_width = "45%"     # popup only: cells (24) or a percentage
 popup_height = "40%"
@@ -178,7 +178,7 @@ popup_height = "40%"
 | Setting | Effect |
 | --- | --- |
 | `label_prefix` / `label_suffix` | Wrap the target's name in the tab label. Applied when the tab is created, so changing them leaves existing tabs alone |
-| `focus_mode` | Where the focus goes after a batch launch: `stay` on the dashboard, or the `first` / `last` tab of the batch |
+| `focus_mode` | What happens after a batch launch: `stay` on the dashboard, jump to the `first` / `last` tab of the batch, or `close` the dashboard and get back to work |
 | `placement` | `overlay` covers the pane you are on; `popup` is a centred, sized box |
 | `popup_width` / `popup_height` | Popup size, in terminal cells or a percentage of the window. Omit either for Herdr's half-size default. Ignored by `overlay`, which Herdr refuses to size |
 
@@ -214,7 +214,9 @@ you want to manage.
 logs on screen, and restarting reuses the same tab. `x` is what removes a tab.
 
 **Closing the dashboard leaves every service running.** It owns no tab of its
-own, so the key brings it straight back.
+own, so the key brings it straight back. With `focus_mode = "close"` it closes
+itself once a launch is through — but stays up if the batch had anything to
+report, so a skip or a failure is never taken off screen unread.
 
 **An action with nothing to do says so** rather than failing silently — pressing
 `s` on a stopped service prints `api: already stopped, stop skipped`.

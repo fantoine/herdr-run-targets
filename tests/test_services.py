@@ -28,9 +28,16 @@ from run_targets.services import (
     plan_action,
     resolve_selection,
     restart_blocked_message,
+    should_close_after,
     skip_message,
 )
-from run_targets.settings import FOCUS_FIRST, FOCUS_LAST, FOCUS_STAY, Settings
+from run_targets.settings import (
+    FOCUS_CLOSE,
+    FOCUS_FIRST,
+    FOCUS_LAST,
+    FOCUS_STAY,
+    Settings,
+)
 from run_targets.state import ServiceRecord, WorkspaceRecord
 from run_targets.tui import (
     MODE_MULTI,
@@ -250,10 +257,19 @@ def view(state=IDLE, name="api", tab_id=None, pane_id=None):
     return ServiceView(target=target(name), state=state, tab_id=tab_id, pane_id=pane_id)
 
 
-def act(action, views, record, client, workspace_id="w1", settings=None, repo_root="/repo"):
+def outcome_of(
+    action, views, record, client, workspace_id="w1", settings=None, repo_root="/repo"
+):
     return apply_action(
         action, views, record, repo_root, workspace_id, settings or Settings(), client
     )
+
+
+def act(action, views, record, client, workspace_id="w1", settings=None, repo_root="/repo"):
+    """The messages a batch produced, which is what most tests assert on."""
+    return outcome_of(
+        action, views, record, client, workspace_id, settings, repo_root
+    ).messages
 
 
 class ObserveTest(unittest.TestCase):
@@ -551,6 +567,65 @@ class FocusAfterLaunchTest(unittest.TestCase):
             client,
             settings=Settings(focus_mode=FOCUS_LAST),
         )
+        self.assertNotIn("tab_focus", [call[0] for call in client.calls])
+
+
+class CloseAfterLaunchTest(unittest.TestCase):
+    """`focus_mode = "close"` gets the dashboard out of the way once the
+    services are up -- and only then."""
+
+    def _launch(self, action="start", settings=None, state=IDLE, client=None):
+        record = WorkspaceRecord("w1:p1", {} if state is IDLE else {
+            "api": service("w1:t7", "w1:p7", stop_requested=(state is STOPPED))
+        })
+        client = client or FakeClient(panes={"w1:p1", "w1:p7"}, foreground={"w1:p7": True})
+        views = [
+            view(state, tab_id=None if state is IDLE else "w1:t7",
+                 pane_id=None if state is IDLE else "w1:p7")
+        ]
+        result = outcome_of(
+            action, views, record, client, settings=settings or Settings(focus_mode=FOCUS_CLOSE)
+        )
+        return result
+
+    def test_a_created_tab_counts_as_launched(self):
+        self.assertEqual(self._launch().launched, ["api"])
+
+    def test_a_reused_tab_counts_too(self):
+        """Restarting a stopped service is a launch: the tab already existed,
+        the service did not run."""
+        self.assertEqual(self._launch(state=STOPPED).launched, ["api"])
+
+    def test_a_clean_launch_closes_the_dashboard(self):
+        result = self._launch()
+        self.assertTrue(should_close_after("start", FOCUS_CLOSE, result))
+
+    def test_a_stop_leaves_it_open(self):
+        """Its state is exactly what you want to read after stopping."""
+        result = self._launch(action="stop", state=RUNNING)
+        self.assertFalse(should_close_after("stop", FOCUS_CLOSE, result))
+
+    def test_a_skipped_launch_leaves_it_open(self):
+        result = self._launch(state=RUNNING)
+        self.assertEqual(result.launched, [])
+        self.assertFalse(should_close_after("start", FOCUS_CLOSE, result))
+
+    def test_a_batch_with_something_to_say_leaves_it_open(self):
+        """A closing dashboard would take the failure off screen unread."""
+        client = FakeClient(panes={"w1:p1"}, fail={"run"})
+        result = self._launch(client=client)
+        self.assertTrue(result.messages)
+        self.assertFalse(should_close_after("start", FOCUS_CLOSE, result))
+
+    def test_the_other_modes_never_close(self):
+        result = self._launch(settings=Settings(focus_mode=FOCUS_STAY))
+        for mode in (FOCUS_STAY, FOCUS_FIRST, FOCUS_LAST):
+            self.assertFalse(should_close_after("start", mode, result))
+
+    def test_close_mode_focuses_nothing(self):
+        """Closing and focusing are alternatives, not a sequence."""
+        client = FakeClient(panes={"w1:p1"})
+        self._launch(client=client)
         self.assertNotIn("tab_focus", [call[0] for call in client.calls])
 
 

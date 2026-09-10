@@ -7,6 +7,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from run_targets.settings import (
+    FOCUS_CLOSE,
     FOCUS_FIRST,
     FOCUS_LAST,
     FOCUS_STAY,
@@ -70,6 +71,13 @@ class ParseSettingsTest(unittest.TestCase):
     def test_focus_mode_last_is_accepted(self):
         settings, _ = parse_settings('[dashboard]\nfocus_mode = "last"\n', SETTINGS_FILE)
         self.assertEqual(settings.focus_mode, FOCUS_LAST)
+
+    def test_focus_mode_close_is_accepted(self):
+        settings, warnings = parse_settings(
+            '[dashboard]\nfocus_mode = "close"\n', SETTINGS_FILE
+        )
+        self.assertEqual(settings.focus_mode, FOCUS_CLOSE)
+        self.assertEqual(warnings, [])
 
 
 class PlacementTest(unittest.TestCase):
