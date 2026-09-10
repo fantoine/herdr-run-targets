@@ -625,6 +625,24 @@ class FooterTextTest(unittest.TestCase):
             "EDIT  space select  enter start  s stop  r restart  x close  esc cancel",
         )
 
+    def test_a_local_target_gets_the_asterisk_explained(self):
+        """The table has no header row, so a bare `*` says nothing on its own."""
+        self.assertEqual(
+            footer_text(MODE_VIEW, has_local=True), "VIEW  e edit  q close  * local"
+        )
+
+    def test_the_legend_stays_away_when_no_target_is_local(self):
+        self.assertNotIn("local", footer_text(MODE_EDIT, has_local=False))
+
+    def test_the_legend_follows_into_edit_mode(self):
+        self.assertTrue(footer_text(MODE_EDIT, has_local=True).endswith("* local"))
+
+    def test_the_legend_wraps_like_any_other_segment(self):
+        lines = footer_lines(MODE_EDIT, 34, has_local=True)
+        self.assertIn("* local", " ".join(lines))
+        for line in lines:
+            self.assertLessEqual(len(line), 34)
+
 
 class HeaderAndEmptyTextTest(unittest.TestCase):
     """A wrong repository must not read as an empty one."""

@@ -80,21 +80,28 @@ def visible_lines(
     return kept
 
 
-def footer_text(mode: str) -> str:
+def footer_text(mode: str, has_local: bool = False) -> str:
     """The help bar, which changes with the mode.
 
     View mode offers no destructive key: it is a display first.
     """
-    return "  ".join(footer_segments(mode))
+    return "  ".join(footer_segments(mode, has_local))
 
 
-def footer_segments(mode: str) -> list[str]:
+def footer_segments(mode: str, has_local: bool = False) -> list[str]:
     """The footer's items, each unbreakable.
 
     Keeping them separate lets the bar wrap without ever cutting a key in two.
+
+    The `* local` legend is the only column marker the table explains, because
+    it is the only one that needs it: a name and a state read themselves, a bare
+    asterisk does not. It appears only when a local target is on screen, and it
+    lives in the footer rather than in a header row -- a header would cost a
+    line of a popup that is 40% of the window tall, and would still leave the
+    asterisk unexplained.
     """
     if mode == MODE_EDIT:
-        return [
+        segments = [
             "EDIT",
             "space select",
             "enter start",
@@ -103,10 +110,14 @@ def footer_segments(mode: str) -> list[str]:
             "x close",
             "esc cancel",
         ]
-    return ["VIEW", "e edit", "q close"]
+    else:
+        segments = ["VIEW", "e edit", "q close"]
+    if has_local:
+        segments.append("* local")
+    return segments
 
 
-def footer_lines(mode: str, width: int) -> list[str]:
+def footer_lines(mode: str, width: int, has_local: bool = False) -> list[str]:
     """Wrap the footer over as many lines as the width demands.
 
     Truncating hid `s stop`, `r restart` and `x close` as soon as one service
@@ -116,7 +127,7 @@ def footer_lines(mode: str, width: int) -> list[str]:
     """
     lines: list[str] = []
     current = ""
-    for segment in footer_segments(mode):
+    for segment in footer_segments(mode, has_local):
         if not current:
             current = segment
         elif len(current) + 2 + len(segment) <= width:
@@ -284,7 +295,10 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         stdscr.addstr(0, 0, header_text(dashboard.repo_root)[: width - 1], curses.A_BOLD)
         # The footer can take several lines in edit mode; the service rows must
         # not encroach on it.
-        footer_height = len(footer_lines(dashboard.mode, max(1, width - 1)))
+        has_local = any(
+            view.target.origin == ORIGIN_LOCAL for view in dashboard.views
+        )
+        footer_height = len(footer_lines(dashboard.mode, max(1, width - 1), has_local))
         rows_capacity = max(0, height - 3 - footer_height)
         used = 0
         for index, view in enumerate(dashboard.views[:rows_capacity]):
@@ -301,7 +315,7 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             stdscr.addstr(2, 0, empty_text(dashboard.repo_root)[: width - 1])
             used = 1
 
-        footer = footer_lines(dashboard.mode, max(1, width - 1))
+        footer = footer_lines(dashboard.mode, max(1, width - 1), has_local)
         footer_top = height - len(footer)
         lines = visible_lines(
             dashboard.messages, dashboard.warnings, max(0, footer_top - 2 - used)

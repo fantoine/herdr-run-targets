@@ -126,9 +126,10 @@ env = { PORT = "3000" }    # optional
 ```
 
 A local target with the same `name` replaces the team one; a new name is added
-to the list. Local targets show a trailing `*` in the dashboard. Either file
-alone is enough, so you can try a target without committing anything, and a
-broken file never costs you the targets of the other one.
+to the list. Local targets show a trailing `*`, and the dashboard's footer spells
+it out as `* local` while one is on screen. Either file alone is enough, so you
+can try a target without committing anything, and a broken file never costs you
+the targets of the other one.
 
 ### Drive the dashboard
 
