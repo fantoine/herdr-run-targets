@@ -79,12 +79,14 @@ def list_panes() -> list[dict]:
     return [p for p in panes if isinstance(p, dict)] if isinstance(panes, list) else []
 
 
-def panes_in_tab(tab_id: str) -> dict[str, dict]:
-    """A tab's panes, keyed by pane id."""
+def live_pane_ids() -> set[str]:
+    """Every live pane id in the session.
+
+    Global, not per tab: each service now lives in a tab of its own, so the
+    journal's pane ids are what identify them, not the tab they sit in.
+    """
     return {
-        pane["pane_id"]: pane
-        for pane in list_panes()
-        if isinstance(pane.get("pane_id"), str) and pane.get("tab_id") == tab_id
+        pane["pane_id"] for pane in list_panes() if isinstance(pane.get("pane_id"), str)
     }
 
 
@@ -109,17 +111,14 @@ def has_foreground_command(info: dict) -> bool:
     return False
 
 
-def split_args(
-    pane_id: str,
-    direction: str,
-    ratio: float | None,
+def tab_create_args(
+    workspace_id: str,
+    label: str,
     cwd: str | None,
     env: dict[str, str] | None,
 ) -> list[str]:
-    """A split's command line. Isolated so it is testable without Herdr."""
-    args = ["pane", "split", pane_id, "--direction", direction, "--no-focus"]
-    if ratio is not None:
-        args += ["--ratio", str(ratio)]
+    """A tab creation's command line. Isolated so it is testable without Herdr."""
+    args = ["tab", "create", "--workspace", workspace_id, "--label", label, "--no-focus"]
     if cwd is not None:
         args += ["--cwd", cwd]
     for key, value in (env or {}).items():
@@ -127,24 +126,32 @@ def split_args(
     return args
 
 
-def pane_split(
-    pane_id: str,
-    direction: str,
-    ratio: float | None = None,
+def tab_create(
+    workspace_id: str,
+    label: str,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
-) -> str:
-    """Create a pane and return its id.
+) -> tuple[str, str]:
+    """Create a tab and return its id along with its root pane's.
 
-    The id is read from the response, never inferred: splitting `w4:p5` returned
-    `w4:p7` during the probe, so ids do not run in sequence.
+    Herdr answers with both, so neither is ever inferred -- the ids do not run in
+    sequence. The label is set here rather than renamed afterwards: one call
+    instead of two, and the tab never flashes a generic name.
     """
-    result = herdr_result(split_args(pane_id, direction, ratio, cwd, env))
-    pane = result.get("pane")
-    new_id = pane.get("pane_id") if isinstance(pane, dict) else None
-    if not isinstance(new_id, str) or not new_id:
-        raise RuntimeError("herdr pane split returned no pane id")
-    return new_id
+    result = herdr_result(tab_create_args(workspace_id, label, cwd, env))
+    tab = result.get("tab")
+    pane = result.get("root_pane")
+    tab_id = tab.get("tab_id") if isinstance(tab, dict) else None
+    pane_id = pane.get("pane_id") if isinstance(pane, dict) else None
+    if not isinstance(tab_id, str) or not tab_id:
+        raise RuntimeError("herdr tab create returned no tab id")
+    if not isinstance(pane_id, str) or not pane_id:
+        raise RuntimeError("herdr tab create returned no root pane id")
+    return tab_id, pane_id
+
+
+def tab_focus(tab_id: str) -> None:
+    herdr_call(["tab", "focus", tab_id])
 
 
 def pane_run(pane_id: str, command: str) -> None:
@@ -154,20 +161,6 @@ def pane_run(pane_id: str, command: str) -> None:
 
 def pane_send_keys(pane_id: str, *keys: str) -> None:
     herdr_call(["pane", "send-keys", pane_id, *keys])
-
-
-def pane_rename(pane_id: str, label: str) -> None:
-    """Name a pane. Used to carry a target's name onto its service pane."""
-    herdr_call(["pane", "rename", pane_id, label])
-
-
-def tab_rename(tab_id: str, label: str) -> None:
-    """Name a tab.
-
-    `plugin pane open` has no label flag -- the manifest's `title` names the
-    pane, not the tab -- so renaming happens afterwards.
-    """
-    herdr_call(["tab", "rename", tab_id, label])
 
 
 def pane_close(pane_id: str) -> None:

@@ -1,7 +1,8 @@
 """Service state and action decisions.
 
-This whole file is pure: it speaks neither to Herdr nor to the terminal, only to
-values. That is what makes the idempotence table verifiable cell by cell.
+The deciding half of this file is pure: it speaks neither to Herdr nor to the
+terminal, only to values. That is what makes the idempotence table verifiable
+cell by cell.
 """
 
 from __future__ import annotations
@@ -12,7 +13,8 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from .config import Target
-from .state import ServiceRecord, TabRecord
+from .settings import FOCUS_FIRST, FOCUS_LAST, Settings, tab_label
+from .state import ServiceRecord, WorkspaceRecord
 
 RUNNING = "running"
 STOPPED = "stopped"
@@ -97,24 +99,6 @@ def plan_action(action: str, state: str) -> str:
     return _PLAN.get(action, {}).get(state, OP_SKIP)
 
 
-def next_split_target(
-    tab: TabRecord, live_pane_ids: set[str]
-) -> tuple[str, str] | None:
-    """The pane to split to host a new service, and the direction.
-
-    Only considers panes from the journal. A fresh tab already holds
-    `herdr-sidebar`'s docked pane; splitting "the tab's last pane" cut it in two
-    during the design probe.
-    """
-    last = tab.last_service_pane_id
-    if last is not None and last in live_pane_ids:
-        return last, "down"
-    control = tab.control_pane_id
-    if control is not None and control in live_pane_ids:
-        return control, "right"
-    return None
-
-
 def resolve_selection(
     names: Sequence[str], checked: set[str], cursor: str | None
 ) -> list[str]:
@@ -129,6 +113,21 @@ def resolve_selection(
     if cursor is not None and cursor in names:
         return [cursor]
     return []
+
+
+def focus_target(created: Sequence[str], mode: str) -> str | None:
+    """The tab to focus once a batch has launched, per the user's setting.
+
+    Returns None for the default: the dashboard is what shows the states, so
+    staying on it is worth more than watching one service's output.
+    """
+    if not created:
+        return None
+    if mode == FOCUS_FIRST:
+        return created[0]
+    if mode == FOCUS_LAST:
+        return created[-1]
+    return None
 
 
 def restart_blocked_message(name: str) -> str:
@@ -155,67 +154,68 @@ class ServiceView:
 
     target: Target
     state: str
+    tab_id: str | None
     pane_id: str | None
 
 
 def observe(
-    tab: TabRecord, targets: Sequence[Target], client, tab_id: str
+    record: WorkspaceRecord, targets: Sequence[Target], client
 ) -> list[ServiceView]:
     """Recompute each target's state from Herdr.
 
-    State is never read from the journal alone: the journal says which panes
-    belong to the plugin, observation says what happens in them.
+    State is never read from the journal alone: the journal says which tabs and
+    panes belong to the plugin, observation says what happens in them.
     """
-    live = set(client.panes_in_tab(tab_id))
+    live = client.live_pane_ids()
     views: list[ServiceView] = []
     for target in targets:
-        record = tab.services.get(target.name)
-        pane_alive = record is not None and record.pane_id in live
+        service = record.services.get(target.name)
+        pane_alive = service is not None and service.pane_id in live
         foreground = False
         if pane_alive:
-            foreground = client.has_foreground_command(client.process_info(record.pane_id))
+            foreground = client.has_foreground_command(client.process_info(service.pane_id))
         views.append(
             ServiceView(
                 target=target,
-                state=derive_state(record, pane_alive, foreground),
-                pane_id=record.pane_id if record is not None else None,
+                state=derive_state(service, pane_alive, foreground),
+                tab_id=service.tab_id if service is not None else None,
+                pane_id=service.pane_id if service is not None else None,
             )
         )
     return views
 
 
-def _start_in_pane(tab: TabRecord, view: ServiceView, pane_id: str, client) -> None:
-    # The pane is recorded before the launch: if `pane_run` fails, the service
-    # stays associated with its pane rather than leaving a live pane no journal
-    # entry claims -- a later "start" would reuse it, where an orphaned pane
-    # would split one more pane on every attempt.
-    tab.services[view.target.name] = ServiceRecord(pane_id=pane_id, stop_requested=False)
+def _start_in_pane(
+    record: WorkspaceRecord, view: ServiceView, tab_id: str, pane_id: str, client
+) -> None:
+    # The tab is recorded before the launch: if `pane_run` fails, the service
+    # stays associated with its tab rather than leaving a live tab no journal
+    # entry claims -- a later "start" would reuse it, where an orphaned tab
+    # would open one more on every attempt.
+    record.services[view.target.name] = ServiceRecord(
+        tab_id=tab_id, pane_id=pane_id, stop_requested=False
+    )
     client.pane_run(pane_id, view.target.command)
 
 
 def _create_and_start(
-    tab: TabRecord, view: ServiceView, repo_root: str, client, tab_id: str
-) -> None:
-    live = set(client.panes_in_tab(tab_id))
-    destination = next_split_target(tab, live)
-    if destination is None:
-        raise RuntimeError("no pane of ours to split from")
-    pane_id, direction = destination
+    record: WorkspaceRecord,
+    view: ServiceView,
+    repo_root: str,
+    workspace_id: str,
+    settings: Settings,
+    client,
+) -> str:
+    """Open a tab for the service and start it. Returns the new tab's id."""
     cwd = os.path.join(repo_root, view.target.cwd) if view.target.cwd else repo_root
-    ratio = 0.25 if direction == "right" else None
-    new_pane = client.pane_split(
-        pane_id, direction, ratio=ratio, cwd=cwd, env=view.target.env or None
+    tab_id, pane_id = client.tab_create(
+        workspace_id,
+        tab_label(view.target.name, settings),
+        cwd=cwd,
+        env=view.target.env or None,
     )
-    tab.last_service_pane_id = new_pane
-    # The pane carries its target's name: in a column of services, a generic
-    # terminal title says nothing about what runs there. The rename comes before
-    # the launch, otherwise the command would set a title of its own.
-    # A failure here must not keep the service from starting.
-    try:
-        client.pane_rename(new_pane, view.target.name)
-    except RuntimeError:
-        pass
-    _start_in_pane(tab, view, new_pane, client)
+    _start_in_pane(record, view, tab_id, pane_id, client)
+    return tab_id
 
 
 def _wait_until_stopped(pane_id: str, client) -> bool:
@@ -232,21 +232,19 @@ def _wait_until_stopped(pane_id: str, client) -> bool:
     return not client.has_foreground_command(client.process_info(pane_id))
 
 
-def _forget(tab: TabRecord, name: str) -> None:
-    """Drop a service from the journal, keeping `last_service_pane_id` coherent."""
-    record = tab.services.pop(name, None)
-    if record is not None and tab.last_service_pane_id == record.pane_id:
-        remaining = [service.pane_id for service in tab.services.values()]
-        tab.last_service_pane_id = remaining[-1] if remaining else None
+def _forget(record: WorkspaceRecord, name: str) -> None:
+    """Drop a service from the journal."""
+    record.services.pop(name, None)
 
 
 def apply_action(
     action: str,
     views: Sequence[ServiceView],
-    tab: TabRecord,
+    record: WorkspaceRecord,
     repo_root: str,
+    workspace_id: str,
+    settings: Settings,
     client,
-    tab_id: str,
 ) -> list[str]:
     """Apply an action to a selection, and return the messages to display.
 
@@ -254,6 +252,7 @@ def apply_action(
     beats a batch abandoned on the first error.
     """
     messages: list[str] = []
+    created: list[str] = []
     for view in views:
         operation = plan_action(action, view.state)
         name = view.target.name
@@ -261,25 +260,39 @@ def apply_action(
             if operation == OP_SKIP:
                 messages.append(skip_message(name, action, view.state))
             elif operation == OP_CREATE:
-                _create_and_start(tab, view, repo_root, client, tab_id)
+                created.append(
+                    _create_and_start(
+                        record, view, repo_root, workspace_id, settings, client
+                    )
+                )
             elif operation == OP_START:
-                _start_in_pane(tab, view, view.pane_id, client)
+                _start_in_pane(record, view, view.tab_id, view.pane_id, client)
             elif operation == OP_STOP:
                 client.pane_send_keys(view.pane_id, "ctrl+c")
-                record = tab.services.get(name)
-                if record is not None:
-                    record.stop_requested = True
+                service = record.services.get(name)
+                if service is not None:
+                    service.stop_requested = True
             elif operation == OP_RESTART:
                 client.pane_send_keys(view.pane_id, "ctrl+c")
                 if _wait_until_stopped(view.pane_id, client):
-                    _start_in_pane(tab, view, view.pane_id, client)
+                    _start_in_pane(record, view, view.tab_id, view.pane_id, client)
                 else:
                     messages.append(restart_blocked_message(name))
             elif operation == OP_CLOSE:
-                client.pane_close(view.pane_id)
-                _forget(tab, name)
+                client.tab_close(view.tab_id)
+                _forget(record, name)
             elif operation == OP_FORGET:
-                _forget(tab, name)
+                _forget(record, name)
         except RuntimeError as error:
             messages.append(f"{name}: {error}")
+
+    # Focus comes last, once every tab exists: focusing between two creations
+    # would leave the batch's tail opening behind a tab the user is now reading.
+    # A failed focus is worth saying and nothing more -- the services are up.
+    tab_id = focus_target(created, settings.focus_mode)
+    if tab_id is not None:
+        try:
+            client.tab_focus(tab_id)
+        except RuntimeError as error:
+            messages.append(f"could not focus the tab: {error}")
     return messages

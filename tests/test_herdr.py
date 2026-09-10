@@ -8,15 +8,14 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from run_targets.herdr import (
-    pane_rename,
-    tab_rename,
     describe_herdr_failure,
     has_foreground_command,
     herdr_bin,
     herdr_call,
-    pane_split,
-    panes_in_tab,
-    split_args,
+    live_pane_ids,
+    tab_create,
+    tab_create_args,
+    tab_focus,
 )
 
 
@@ -58,32 +57,36 @@ class DescribeHerdrFailureTest(unittest.TestCase):
         self.assertIn("pane get", message)
 
 
-class SplitArgsTest(unittest.TestCase):
-    """A split's command line, without running Herdr."""
+class TabCreateArgsTest(unittest.TestCase):
+    """A tab creation's command line, without running Herdr."""
 
-    def test_minimal_split(self):
+    def test_minimal_creation(self):
         self.assertEqual(
-            split_args("w1:p1", "down", None, None, None),
-            ["pane", "split", "w1:p1", "--direction", "down", "--no-focus"],
+            tab_create_args("w1", "api", None, None),
+            ["tab", "create", "--workspace", "w1", "--label", "api", "--no-focus"],
         )
 
-    def test_ratio_cwd_and_env_are_appended(self):
-        args = split_args("w1:p1", "right", 0.25, "/repo", {"PORT": "3000"})
+    def test_cwd_and_env_are_appended(self):
+        args = tab_create_args("w1", "run:web", "/repo/apps/web", {"PORT": "3000"})
         self.assertEqual(
             args,
             [
-                "pane", "split", "w1:p1",
-                "--direction", "right",
+                "tab", "create",
+                "--workspace", "w1",
+                "--label", "run:web",
                 "--no-focus",
-                "--ratio", "0.25",
-                "--cwd", "/repo",
+                "--cwd", "/repo/apps/web",
                 "--env", "PORT=3000",
             ],
         )
 
     def test_every_env_pair_gets_its_own_flag(self):
-        args = split_args("w1:p1", "down", None, None, {"A": "1", "B": "2"})
+        args = tab_create_args("w1", "api", None, {"A": "1", "B": "2"})
         self.assertEqual(args.count("--env"), 2)
+
+    def test_the_tab_is_created_without_stealing_the_focus(self):
+        """Focus is a separate, configurable step, applied once the batch is up."""
+        self.assertIn("--no-focus", tab_create_args("w1", "api", None, None))
 
 
 class HasForegroundCommandTest(unittest.TestCase):
@@ -118,64 +121,64 @@ class HerdrCallTest(unittest.TestCase):
             self.assertEqual(herdr_call(["pane", "run", "w1:p1", "x"]), "")
 
 
-class PaneSplitTest(unittest.TestCase):
-    def test_returns_the_id_from_the_response(self):
-        with patch("run_targets.herdr.herdr_result", return_value={"pane": {"pane_id": "w4:p7"}}):
-            self.assertEqual(pane_split("w4:p5", "right"), "w4:p7")
+class TabCreateTest(unittest.TestCase):
+    RESULT = {"tab": {"tab_id": "w1:t7"}, "root_pane": {"pane_id": "w1:p7"}}
 
-    def test_the_returned_id_is_not_derived_from_the_source(self):
-        """Splitting w4:p5 returned w4:p7 on Herdr 0.8.2: ids do not run in sequence."""
-        with patch("run_targets.herdr.herdr_result", return_value={"pane": {"pane_id": "w9:p42"}}):
-            self.assertEqual(pane_split("w4:p5", "down"), "w9:p42")
+    def test_returns_both_ids_from_the_response(self):
+        with patch("run_targets.herdr.herdr_result", return_value=self.RESULT):
+            self.assertEqual(tab_create("w1", "api"), ("w1:t7", "w1:p7"))
 
-    def test_raises_when_the_response_carries_no_pane(self):
-        with patch("run_targets.herdr.herdr_result", return_value={}):
-            with self.assertRaises(RuntimeError):
-                pane_split("w4:p5", "right")
+    def test_the_ids_are_read_never_derived(self):
+        """`tab create` answered w10:t2 / w10:p2 on Herdr 0.8.2, but nothing
+        promises a pane id follows its tab's number."""
+        payload = {"tab": {"tab_id": "w1:t7"}, "root_pane": {"pane_id": "w9:p42"}}
+        with patch("run_targets.herdr.herdr_result", return_value=payload):
+            self.assertEqual(tab_create("w1", "api"), ("w1:t7", "w9:p42"))
 
-    def test_raises_when_the_pane_id_is_missing_or_not_a_string(self):
-        for payload in ({"pane": {}}, {"pane": {"pane_id": 7}}, {"pane": {"pane_id": ""}}):
+    def test_raises_when_the_tab_id_is_missing_or_unusable(self):
+        for payload in (
+            {},
+            {"tab": {}, "root_pane": {"pane_id": "w1:p7"}},
+            {"tab": {"tab_id": ""}, "root_pane": {"pane_id": "w1:p7"}},
+            {"tab": "w1:t7", "root_pane": {"pane_id": "w1:p7"}},
+        ):
             with patch("run_targets.herdr.herdr_result", return_value=payload):
                 with self.assertRaises(RuntimeError):
-                    pane_split("w4:p5", "right")
+                    tab_create("w1", "api")
 
-    def test_raises_when_pane_is_not_an_object(self):
-        with patch("run_targets.herdr.herdr_result", return_value={"pane": "w4:p7"}):
-            with self.assertRaises(RuntimeError):
-                pane_split("w4:p5", "right")
+    def test_raises_when_the_root_pane_id_is_missing_or_unusable(self):
+        for payload in (
+            {"tab": {"tab_id": "w1:t7"}},
+            {"tab": {"tab_id": "w1:t7"}, "root_pane": {}},
+            {"tab": {"tab_id": "w1:t7"}, "root_pane": {"pane_id": 7}},
+        ):
+            with patch("run_targets.herdr.herdr_result", return_value=payload):
+                with self.assertRaises(RuntimeError):
+                    tab_create("w1", "api")
 
 
-class PanesInTabTest(unittest.TestCase):
-    def test_keeps_only_the_panes_of_that_tab(self):
+class TabFocusTest(unittest.TestCase):
+    def test_it_goes_through_herdr_call_with_no_json_contract(self):
+        with patch("run_targets.herdr.herdr_call", return_value="") as call:
+            tab_focus("w1:t7")
+        self.assertEqual(call.call_args.args[0], ["tab", "focus", "w1:t7"])
+
+
+class LivePaneIdsTest(unittest.TestCase):
+    """Global, not per tab: each service now lives in a tab of its own."""
+
+    def test_collects_panes_from_every_tab(self):
         panes = [
             {"pane_id": "w1:p1", "tab_id": "w1:t1"},
             {"pane_id": "w1:p2", "tab_id": "w1:t2"},
         ]
         with patch("run_targets.herdr.list_panes", return_value=panes):
-            self.assertEqual(sorted(panes_in_tab("w1:t1")), ["w1:p1"])
+            self.assertEqual(live_pane_ids(), {"w1:p1", "w1:p2"})
 
     def test_entries_without_a_usable_pane_id_are_dropped(self):
-        panes = [
-            {"tab_id": "w1:t1"},
-            {"pane_id": 7, "tab_id": "w1:t1"},
-            {"pane_id": "w1:p1", "tab_id": "w1:t1"},
-        ]
+        panes = [{"tab_id": "w1:t1"}, {"pane_id": 7}, {"pane_id": "w1:p1"}]
         with patch("run_targets.herdr.list_panes", return_value=panes):
-            self.assertEqual(sorted(panes_in_tab("w1:t1")), ["w1:p1"])
-
-
-class RenameArgsTest(unittest.TestCase):
-    """Both renames go through `herdr_call`, with no JSON contract."""
-
-    def test_pane_rename_sends_the_label(self):
-        with patch("run_targets.herdr.herdr_call", return_value="") as call:
-            pane_rename("w1:p2", "api")
-        self.assertEqual(call.call_args.args[0], ["pane", "rename", "w1:p2", "api"])
-
-    def test_tab_rename_sends_the_label(self):
-        with patch("run_targets.herdr.herdr_call", return_value="") as call:
-            tab_rename("w1:t1", "run")
-        self.assertEqual(call.call_args.args[0], ["tab", "rename", "w1:t1", "run"])
+            self.assertEqual(live_pane_ids(), {"w1:p1"})
 
 
 if __name__ == "__main__":

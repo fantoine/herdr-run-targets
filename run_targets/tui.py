@@ -9,7 +9,8 @@ import time
 from . import herdr
 from .config import ORIGIN_LOCAL, load_run_config
 from .services import ServiceView, apply_action, observe, resolve_selection
-from .state import TabRecord, load_state, save_state
+from .settings import Settings, load_settings
+from .state import WorkspaceRecord, load_state, save_state
 
 MODE_VIEW = "view"
 MODE_EDIT = "edit"
@@ -79,10 +80,7 @@ def visible_lines(
 def footer_text(mode: str) -> str:
     """The help bar, which changes with the mode.
 
-    View mode offers no destructive key: it is a display first. There is no
-    "focus" key either -- Herdr 0.8.2 exposes no way to focus an arbitrary pane
-    by its id. That leaves the Herdr prefix, which we have not verified a curses
-    TUI lets through.
+    View mode offers no destructive key: it is a display first.
     """
     return "  ".join(footer_segments(mode))
 
@@ -131,9 +129,10 @@ def footer_lines(mode: str, width: int) -> list[str]:
 class Dashboard:
     """The screen's state: mode, cursor, checked boxes, latest message."""
 
-    def __init__(self, tab_id: str, repo_root: str, warnings: list[str]) -> None:
-        self.tab_id = tab_id
+    def __init__(self, workspace_id: str, repo_root: str, warnings: list[str]) -> None:
+        self.workspace_id = workspace_id
         self.repo_root = repo_root
+        self.settings = Settings()
         self.mode = MODE_VIEW
         self.cursor = 0
         self.checked: set[str] = set()
@@ -149,18 +148,22 @@ class Dashboard:
         names = self.names()
         return names[self.cursor] if 0 <= self.cursor < len(names) else None
 
-    def tab(self) -> TabRecord:
+    def record(self) -> WorkspaceRecord:
         state = load_state()
-        return state.get(self.tab_id, TabRecord())
+        return state.get(self.workspace_id, WorkspaceRecord())
 
     def refresh(self) -> None:
         targets, warnings = load_run_config(self.repo_root)
+        # Settings are re-read on every tick, like the target files: a prefix or
+        # focus mode edited in another pane takes effect on the next launch,
+        # with no dashboard restart.
+        self.settings, settings_warnings = load_settings()
         # `refresh` never touches `messages`: a configuration warning is a
         # permanent state of the files, an action's feedback is a one-off event.
         # Conflating them would erase, on every refresh, the "skipped" the user
         # needs to see.
-        self.warnings = warnings
-        self.views = observe(self.tab(), targets, herdr, self.tab_id)
+        self.warnings = settings_warnings + warnings
+        self.views = observe(self.record(), targets, herdr)
         if self.cursor >= len(self.views):
             self.cursor = max(0, len(self.views) - 1)
 
@@ -191,9 +194,17 @@ class Dashboard:
         selected = resolve_selection(self.names(), self.checked, self.cursor_name())
         chosen = [view for view in self.views if view.target.name in selected]
         state = load_state()
-        tab = state.setdefault(self.tab_id, TabRecord())
+        record = state.setdefault(self.workspace_id, WorkspaceRecord())
         self.set_messages(
-            apply_action(action, chosen, tab, self.repo_root, herdr, self.tab_id)
+            apply_action(
+                action,
+                chosen,
+                record,
+                self.repo_root,
+                self.workspace_id,
+                self.settings,
+                herdr,
+            )
         )
         save_state(state)
         self.checked.clear()

@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -21,7 +22,7 @@ from run_targets.services import (
     ServiceView,
     apply_action,
     derive_state,
-    next_split_target,
+    focus_target,
     observe,
     plan_action,
     resolve_selection,
@@ -29,7 +30,8 @@ from run_targets.services import (
     skip_message,
 )
 from run_targets.config import Target
-from run_targets.state import ServiceRecord, TabRecord
+from run_targets.settings import FOCUS_FIRST, FOCUS_LAST, FOCUS_STAY, Settings
+from run_targets.state import ServiceRecord, WorkspaceRecord
 from run_targets.tui import (
     footer_lines,
     MODE_EDIT,
@@ -47,28 +49,29 @@ def no_sleep():
     return patch("run_targets.services._sleep", lambda seconds: None)
 
 
+def service(tab_id="w1:t7", pane_id="w1:p7", stop_requested=False):
+    return ServiceRecord(tab_id=tab_id, pane_id=pane_id, stop_requested=stop_requested)
+
+
 class DeriveStateTest(unittest.TestCase):
     def test_no_record_is_idle(self):
         self.assertEqual(derive_state(None, False, False), IDLE)
 
     def test_a_record_whose_pane_vanished_is_gone(self):
-        self.assertEqual(derive_state(ServiceRecord("w1:p2"), False, False), GONE)
+        self.assertEqual(derive_state(service(), False, False), GONE)
 
     def test_a_foreground_process_is_running(self):
-        self.assertEqual(derive_state(ServiceRecord("w1:p2"), True, True), RUNNING)
+        self.assertEqual(derive_state(service(), True, True), RUNNING)
 
     def test_stopped_when_the_plugin_asked_for_it(self):
-        record = ServiceRecord("w1:p2", stop_requested=True)
-        self.assertEqual(derive_state(record, True, False), STOPPED)
+        self.assertEqual(derive_state(service(stop_requested=True), True, False), STOPPED)
 
     def test_exited_when_nobody_asked(self):
-        record = ServiceRecord("w1:p2", stop_requested=False)
-        self.assertEqual(derive_state(record, True, False), EXITED)
+        self.assertEqual(derive_state(service(), True, False), EXITED)
 
     def test_a_running_process_is_running_even_if_a_stop_was_requested(self):
         """The process has not answered the ctrl+C yet: it is still running."""
-        record = ServiceRecord("w1:p2", stop_requested=True)
-        self.assertEqual(derive_state(record, True, True), RUNNING)
+        self.assertEqual(derive_state(service(stop_requested=True), True, True), RUNNING)
 
 
 class PlanActionTest(unittest.TestCase):
@@ -106,29 +109,18 @@ class PlanActionTest(unittest.TestCase):
         self.assertEqual(plan_action("dance", RUNNING), OP_SKIP)
 
 
-class NextSplitTargetTest(unittest.TestCase):
-    def test_splits_down_from_the_last_service_pane(self):
-        tab = TabRecord("w1:p1", "w1:p5", {"api": ServiceRecord("w1:p5")})
-        self.assertEqual(next_split_target(tab, {"w1:p1", "w1:p5"}), ("w1:p5", "down"))
+class FocusTargetTest(unittest.TestCase):
+    def test_the_default_leaves_the_focus_alone(self):
+        self.assertIsNone(focus_target(["w1:t7", "w1:t8"], FOCUS_STAY))
 
-    def test_the_first_service_splits_right_from_the_control_pane(self):
-        tab = TabRecord("w1:p1", None, {})
-        self.assertEqual(next_split_target(tab, {"w1:p1"}), ("w1:p1", "right"))
+    def test_first_mode_takes_the_first_tab_of_the_batch(self):
+        self.assertEqual(focus_target(["w1:t7", "w1:t8"], FOCUS_FIRST), "w1:t7")
 
-    def test_falls_back_to_the_control_pane_when_the_last_service_vanished(self):
-        tab = TabRecord("w1:p1", "w1:p5", {})
-        self.assertEqual(next_split_target(tab, {"w1:p1"}), ("w1:p1", "right"))
+    def test_last_mode_takes_the_last(self):
+        self.assertEqual(focus_target(["w1:t7", "w1:t8"], FOCUS_LAST), "w1:t8")
 
-    def test_returns_none_without_a_live_control_pane(self):
-        tab = TabRecord("w1:p1", None, {})
-        self.assertIsNone(next_split_target(tab, set()))
-
-    def test_never_targets_a_pane_the_plugin_does_not_own(self):
-        """herdr-sidebar's pane lives in the same tab and must never serve as a
-        split point."""
-        tab = TabRecord("w1:p1", None, {})
-        target = next_split_target(tab, {"w1:p1", "w1:p9"})
-        self.assertEqual(target, ("w1:p1", "right"))
+    def test_nothing_created_means_nothing_to_focus(self):
+        self.assertIsNone(focus_target([], FOCUS_LAST))
 
 
 class ResolveSelectionTest(unittest.TestCase):
@@ -159,8 +151,8 @@ class SkipMessageTest(unittest.TestCase):
         )
 
     def test_the_action_is_part_of_the_message(self):
-        """Two skip messages now coexist; they must be told apart by something
-        other than the service name."""
+        """Two skip messages coexist; they must be told apart by something other
+        than the service name."""
         self.assertEqual(
             skip_message("db", "close", IDLE), "db: already idle, close skipped"
         )
@@ -175,15 +167,16 @@ class SkipMessageTest(unittest.TestCase):
 class FakeClient:
     """A stand-in for the `herdr` module, recording what it is asked to do."""
 
-    def __init__(self, panes=None, foreground=None, split_result="w1:p9", fail=None):
-        self.panes = panes if panes is not None else {}
+    def __init__(self, panes=None, foreground=None, created=None, fail=None):
+        self.panes = set(panes or ())
         self.foreground = foreground or {}
-        self.split_result = split_result
+        # Tabs handed out by `tab_create`, in order.
+        self.created = list(created or [("w1:t7", "w1:p7"), ("w1:t8", "w1:p8")])
         self.fail = fail or set()
         self.calls = []
 
-    def panes_in_tab(self, tab_id):
-        return {pane_id: {"pane_id": pane_id} for pane_id in self.panes}
+    def live_pane_ids(self):
+        return set(self.panes)
 
     def process_info(self, pane_id):
         self.calls.append(("poll", pane_id))
@@ -192,12 +185,21 @@ class FakeClient:
     def has_foreground_command(self, info):
         return self.foreground.get(info["pane_id"], False)
 
-    def pane_split(self, pane_id, direction, ratio=None, cwd=None, env=None):
-        self.calls.append(("split", pane_id, direction))
-        if "split" in self.fail:
-            raise RuntimeError("split refused")
-        self.panes.add(self.split_result) if isinstance(self.panes, set) else None
-        return self.split_result
+    def tab_create(self, workspace_id, label, cwd=None, env=None):
+        self.calls.append(("tab_create", workspace_id, label, cwd, env))
+        if "tab_create" in self.fail:
+            raise RuntimeError("tab create refused")
+        tab_id, pane_id = self.created.pop(0)
+        self.panes.add(pane_id)
+        return tab_id, pane_id
+
+    def tab_focus(self, tab_id):
+        self.calls.append(("tab_focus", tab_id))
+        if "tab_focus" in self.fail:
+            raise RuntimeError("focus refused")
+
+    def tab_close(self, tab_id):
+        self.calls.append(("tab_close", tab_id))
 
     def pane_run(self, pane_id, command):
         self.calls.append(("run", pane_id, command))
@@ -207,11 +209,8 @@ class FakeClient:
     def pane_send_keys(self, pane_id, *keys):
         self.calls.append(("keys", pane_id, keys))
 
-    def pane_rename(self, pane_id, label):
-        self.calls.append(("rename", pane_id, label))
-
     def pane_close(self, pane_id):
-        self.calls.append(("close", pane_id))
+        self.calls.append(("pane_close", pane_id))
 
 
 class DyingClient(FakeClient):
@@ -240,171 +239,321 @@ def target(name="api", command="run-it"):
     return Target(name=name, command=command, cwd=None, env={}, origin="team")
 
 
+def view(state=IDLE, name="api", tab_id=None, pane_id=None):
+    return ServiceView(target=target(name), state=state, tab_id=tab_id, pane_id=pane_id)
+
+
+def act(action, views, record, client, workspace_id="w1", settings=None, repo_root="/repo"):
+    return apply_action(
+        action, views, record, repo_root, workspace_id, settings or Settings(), client
+    )
+
+
 class ObserveTest(unittest.TestCase):
     def test_an_untracked_target_is_idle(self):
-        tab = TabRecord("w1:p1", None, {})
-        views = observe(tab, [target()], FakeClient(panes={"w1:p1"}), "w1:t1")
+        record = WorkspaceRecord()
+        views = observe(record, [target()], FakeClient(panes={"w1:p1"}))
         self.assertEqual(views[0].state, IDLE)
         self.assertIsNone(views[0].pane_id)
+        self.assertIsNone(views[0].tab_id)
 
     def test_a_tracked_pane_with_a_foreground_process_is_running(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        client = FakeClient(panes={"w1:p1", "w1:p2"}, foreground={"w1:p2": True})
-        views = observe(tab, [target()], client, "w1:t1")
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = FakeClient(panes={"w1:p1", "w1:p7"}, foreground={"w1:p7": True})
+        views = observe(record, [target()], client)
         self.assertEqual(views[0].state, RUNNING)
-        self.assertEqual(views[0].pane_id, "w1:p2")
+        self.assertEqual(views[0].pane_id, "w1:p7")
+        self.assertEqual(views[0].tab_id, "w1:t7")
 
     def test_a_tracked_pane_that_vanished_is_gone(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        views = observe(tab, [target()], FakeClient(panes={"w1:p1"}), "w1:t1")
+        """Closing a service's tab by hand is the common way this happens."""
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        views = observe(record, [target()], FakeClient(panes={"w1:p1"}))
         self.assertEqual(views[0].state, GONE)
+
+    def test_observation_is_not_scoped_to_a_tab(self):
+        """Each service lives in a tab of its own, so a pane list filtered by tab
+        would report every one of them as gone."""
+        record = WorkspaceRecord("w1:p1", {"api": service("w9:t3", "w9:p4")})
+        client = FakeClient(panes={"w9:p4"}, foreground={"w9:p4": True})
+        views = observe(record, [target()], client)
+        self.assertEqual(views[0].state, RUNNING)
 
 
 class ApplyActionTest(unittest.TestCase):
-    def test_starting_an_idle_target_splits_then_runs(self):
-        tab = TabRecord("w1:p1", None, {})
-        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
-        views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
-        apply_action("start", views, tab, "/repo", client, "w1:t1")
+    def test_starting_an_idle_target_creates_a_tab_then_runs(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"}, created=[("w1:t7", "w1:p7")])
+        act("start", [view(IDLE)], record, client)
         self.assertEqual(
             client.calls,
             [
-                ("split", "w1:p1", "right"),
-                ("rename", "w1:p7", "api"),
+                ("tab_create", "w1", "api", "/repo", None),
                 ("run", "w1:p7", "run-it"),
             ],
         )
-        self.assertEqual(tab.services["api"].pane_id, "w1:p7")
-        self.assertEqual(tab.last_service_pane_id, "w1:p7")
-        self.assertFalse(tab.services["api"].stop_requested)
+        self.assertEqual(record.services["api"].tab_id, "w1:t7")
+        self.assertEqual(record.services["api"].pane_id, "w1:p7")
+        self.assertFalse(record.services["api"].stop_requested)
 
     def test_starting_a_stopped_target_reuses_its_pane(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2", stop_requested=True)})
-        client = FakeClient(panes={"w1:p1", "w1:p2"})
-        views = [ServiceView(target=target(), state=STOPPED, pane_id="w1:p2")]
-        apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(client.calls, [("run", "w1:p2", "run-it")])
-        self.assertFalse(tab.services["api"].stop_requested)
+        record = WorkspaceRecord(
+            "w1:p1", {"api": service("w1:t7", "w1:p7", stop_requested=True)}
+        )
+        client = FakeClient(panes={"w1:p1", "w1:p7"})
+        act("start", [view(STOPPED, tab_id="w1:t7", pane_id="w1:p7")], record, client)
+        self.assertEqual(client.calls, [("run", "w1:p7", "run-it")])
+        self.assertFalse(record.services["api"].stop_requested)
 
     def test_stopping_sends_ctrl_c_and_records_the_request(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        client = FakeClient(panes={"w1:p1", "w1:p2"}, foreground={"w1:p2": True})
-        views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
-        apply_action("stop", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(client.calls, [("keys", "w1:p2", ("ctrl+c",))])
-        self.assertTrue(tab.services["api"].stop_requested)
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = FakeClient(panes={"w1:p1", "w1:p7"}, foreground={"w1:p7": True})
+        act("stop", [view(RUNNING, tab_id="w1:t7", pane_id="w1:p7")], record, client)
+        self.assertEqual(client.calls, [("keys", "w1:p7", ("ctrl+c",))])
+        self.assertTrue(record.services["api"].stop_requested)
 
-    def test_closing_removes_the_pane_and_forgets_the_service(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        client = FakeClient(panes={"w1:p1", "w1:p2"})
-        views = [ServiceView(target=target(), state=STOPPED, pane_id="w1:p2")]
-        apply_action("close", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(client.calls, [("close", "w1:p2")])
-        self.assertNotIn("api", tab.services)
-        self.assertIsNone(tab.last_service_pane_id)
+    def test_closing_closes_the_tab_and_forgets_the_service(self):
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = FakeClient(panes={"w1:p1", "w1:p7"})
+        act("close", [view(STOPPED, tab_id="w1:t7", pane_id="w1:p7")], record, client)
+        self.assertEqual(client.calls, [("tab_close", "w1:t7")])
+        self.assertNotIn("api", record.services)
+
+    def test_closing_never_closes_a_lone_pane(self):
+        """`x` removes the service, which now means its whole tab."""
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = FakeClient(panes={"w1:p1", "w1:p7"})
+        act("close", [view(RUNNING, tab_id="w1:t7", pane_id="w1:p7")], record, client)
+        self.assertNotIn("pane_close", [call[0] for call in client.calls])
 
     def test_closing_a_gone_service_only_forgets_it(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
         client = FakeClient(panes={"w1:p1"})
-        views = [ServiceView(target=target(), state=GONE, pane_id="w1:p2")]
-        apply_action("close", views, tab, "/repo", client, "w1:t1")
+        act("close", [view(GONE, tab_id="w1:t7", pane_id="w1:p7")], record, client)
         self.assertEqual(client.calls, [])
-        self.assertNotIn("api", tab.services)
+        self.assertNotIn("api", record.services)
 
     def test_a_skipped_action_is_reported_and_touches_nothing(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2", stop_requested=True)})
-        client = FakeClient(panes={"w1:p1", "w1:p2"})
-        views = [ServiceView(target=target(), state=STOPPED, pane_id="w1:p2")]
-        messages = apply_action("stop", views, tab, "/repo", client, "w1:t1")
+        record = WorkspaceRecord(
+            "w1:p1", {"api": service("w1:t7", "w1:p7", stop_requested=True)}
+        )
+        client = FakeClient(panes={"w1:p1", "w1:p7"})
+        messages = act(
+            "stop", [view(STOPPED, tab_id="w1:t7", pane_id="w1:p7")], record, client
+        )
         self.assertEqual(client.calls, [])
         self.assertEqual(len(messages), 1)
         self.assertIn("skipped", messages[0])
 
     def test_one_failing_target_does_not_stop_the_others(self):
-        tab = TabRecord("w1:p1", None, {})
+        record = WorkspaceRecord("w1:p1", {})
         client = FakeClient(panes={"w1:p1"}, fail={"run"})
-        views = [
-            ServiceView(target=target("api"), state=IDLE, pane_id=None),
-            ServiceView(target=target("web"), state=IDLE, pane_id=None),
-        ]
-        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(len([c for c in client.calls if c[0] == "split"]), 2)
+        messages = act(
+            "start", [view(IDLE, "api"), view(IDLE, "web")], record, client
+        )
+        self.assertEqual(
+            len([call for call in client.calls if call[0] == "tab_create"]), 2
+        )
         self.assertEqual(len(messages), 2)
-        self.assertTrue(all("refused" in m for m in messages))
+        self.assertTrue(all("refused" in message for message in messages))
 
     def test_a_target_cwd_is_resolved_against_the_repository_root(self):
-        tab = TabRecord("w1:p1", None, {})
-        captured = {}
-
-        class CwdClient(FakeClient):
-            def pane_split(self, pane_id, direction, ratio=None, cwd=None, env=None):
-                captured["cwd"] = cwd
-                return "w1:p7"
-
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
         views = [
             ServiceView(
                 target=Target("web", "serve", cwd="apps/web", env={}, origin="team"),
                 state=IDLE,
+                tab_id=None,
                 pane_id=None,
             )
         ]
-        apply_action("start", views, tab, "/repo", CwdClient(panes={"w1:p1"}), "w1:t1")
-        self.assertEqual(captured["cwd"], os.path.join("/repo", "apps/web"))
+        act("start", views, record, client)
+        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        self.assertEqual(created[3], os.path.join("/repo", "apps/web"))
 
-    def test_a_failed_start_still_tracks_the_pane_it_created(self):
-        """Without this, a retry would split one more pane on every failure."""
-        tab = TabRecord("w1:p1", None, {})
-        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7", fail={"run"})
-        views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
-        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(tab.services["api"].pane_id, "w1:p7")
-        self.assertEqual(tab.last_service_pane_id, "w1:p7")
+    def test_a_target_env_reaches_the_new_tab(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        views = [
+            ServiceView(
+                target=Target("web", "serve", cwd=None, env={"PORT": "3000"}, origin="team"),
+                state=IDLE,
+                tab_id=None,
+                pane_id=None,
+            )
+        ]
+        act("start", views, record, client)
+        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        self.assertEqual(created[4], {"PORT": "3000"})
+
+    def test_a_failed_start_still_tracks_the_tab_it_created(self):
+        """Without this, a retry would open one more tab on every failure."""
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"}, created=[("w1:t7", "w1:p7")], fail={"run"})
+        messages = act("start", [view(IDLE)], record, client)
+        self.assertEqual(record.services["api"].tab_id, "w1:t7")
+        self.assertEqual(record.services["api"].pane_id, "w1:p7")
         self.assertEqual(len(messages), 1)
+
+    def test_a_refused_tab_records_nothing(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"}, fail={"tab_create"})
+        messages = act("start", [view(IDLE)], record, client)
+        self.assertEqual(messages, ["api: tab create refused"])
+        self.assertNotIn("api", record.services)
 
     def test_restarting_waits_for_the_process_to_die_before_starting(self):
         """Running the command without waiting would have it swallowed by the
         dying process's standard input: the service would stay stopped."""
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        client = DyingClient(alive_polls=1, panes={"w1:p1", "w1:p2"})
-        views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = DyingClient(alive_polls=1, panes={"w1:p1", "w1:p7"})
         with no_sleep():
-            messages = apply_action("restart", views, tab, "/repo", client, "w1:t1")
+            messages = act(
+                "restart", [view(RUNNING, tab_id="w1:t7", pane_id="w1:p7")], record, client
+            )
         self.assertEqual(
             client.calls,
             [
-                ("keys", "w1:p2", ("ctrl+c",)),
-                ("poll", "w1:p2"),
-                ("poll", "w1:p2"),
-                ("run", "w1:p2", "run-it"),
+                ("keys", "w1:p7", ("ctrl+c",)),
+                ("poll", "w1:p7"),
+                ("poll", "w1:p7"),
+                ("run", "w1:p7", "run-it"),
             ],
         )
         self.assertEqual(messages, [])
-        self.assertFalse(tab.services["api"].stop_requested)
+        self.assertFalse(record.services["api"].stop_requested)
 
     def test_a_process_that_never_dies_is_not_restarted_but_reported(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        client = DyingClient(alive_polls=None, panes={"w1:p1", "w1:p2"})
-        views = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = DyingClient(alive_polls=None, panes={"w1:p1", "w1:p7"})
         with no_sleep():
-            messages = apply_action("restart", views, tab, "/repo", client, "w1:t1")
+            messages = act(
+                "restart", [view(RUNNING, tab_id="w1:t7", pane_id="w1:p7")], record, client
+            )
         self.assertEqual([call for call in client.calls if call[0] == "run"], [])
         self.assertEqual(messages, ["api: still running after stop, restart skipped"])
 
-    def test_a_missing_split_target_is_reported_verbatim(self):
-        """The README documents this message word for word."""
-        tab = TabRecord(None, None, {})
-        client = FakeClient(panes=set())
-        views = [ServiceView(target=target(), state=IDLE, pane_id=None)]
-        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertEqual(messages, ["api: no pane of ours to split from"])
+
+class ServiceTabNamingTest(unittest.TestCase):
+    """A service's tab carries its target's name, to be read from the tab bar."""
+
+    def test_the_label_is_the_target_name_by_default(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        act("start", [view(IDLE, "api")], record, client)
+        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        self.assertEqual(created[2], "api")
+
+    def test_the_configured_prefix_and_suffix_are_applied(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        act(
+            "start",
+            [view(IDLE, "api")],
+            record,
+            client,
+            settings=Settings(label_prefix="run:", label_suffix="!"),
+        )
+        created = [call for call in client.calls if call[0] == "tab_create"][0]
+        self.assertEqual(created[2], "run:api!")
+
+    def test_the_label_is_set_at_creation_not_renamed_afterwards(self):
+        """One call instead of two, and the tab never flashes a generic name."""
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        act("start", [view(IDLE)], record, client)
+        kinds = [call[0] for call in client.calls]
+        self.assertEqual(kinds, ["tab_create", "run"])
+
+    def test_restarting_in_an_existing_tab_creates_nothing(self):
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = FakeClient(panes={"w1:p1", "w1:p7"})
+        act("start", [view(STOPPED, tab_id="w1:t7", pane_id="w1:p7")], record, client)
+        self.assertNotIn("tab_create", [call[0] for call in client.calls])
+
+
+class FocusAfterLaunchTest(unittest.TestCase):
+    def test_the_default_focuses_nothing(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        act("start", [view(IDLE, "api"), view(IDLE, "web")], record, client)
+        self.assertNotIn("tab_focus", [call[0] for call in client.calls])
+
+    def test_first_mode_focuses_the_first_tab_of_the_batch(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        act(
+            "start",
+            [view(IDLE, "api"), view(IDLE, "web")],
+            record,
+            client,
+            settings=Settings(focus_mode=FOCUS_FIRST),
+        )
+        self.assertEqual(client.calls[-1], ("tab_focus", "w1:t7"))
+
+    def test_last_mode_focuses_the_last(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        act(
+            "start",
+            [view(IDLE, "api"), view(IDLE, "web")],
+            record,
+            client,
+            settings=Settings(focus_mode=FOCUS_LAST),
+        )
+        self.assertEqual(client.calls[-1], ("tab_focus", "w1:t8"))
+
+    def test_the_focus_comes_after_every_tab_exists(self):
+        """Focusing between two creations would leave the batch's tail opening
+        behind a tab the user is already reading."""
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"})
+        act(
+            "start",
+            [view(IDLE, "api"), view(IDLE, "web")],
+            record,
+            client,
+            settings=Settings(focus_mode=FOCUS_FIRST),
+        )
+        kinds = [call[0] for call in client.calls]
+        self.assertEqual(kinds.count("tab_create"), 2)
+        self.assertEqual(kinds.index("tab_focus"), len(kinds) - 1)
+
+    def test_a_failed_focus_is_reported_and_nothing_is_undone(self):
+        record = WorkspaceRecord("w1:p1", {})
+        client = FakeClient(panes={"w1:p1"}, fail={"tab_focus"})
+        messages = act(
+            "start",
+            [view(IDLE)],
+            record,
+            client,
+            settings=Settings(focus_mode=FOCUS_LAST),
+        )
+        self.assertIn("api", record.services)
+        self.assertEqual(len(messages), 1)
+        self.assertIn("focus", messages[0])
+
+    def test_reusing_an_existing_tab_does_not_move_the_focus(self):
+        record = WorkspaceRecord("w1:p1", {"api": service("w1:t7", "w1:p7")})
+        client = FakeClient(panes={"w1:p1", "w1:p7"})
+        act(
+            "start",
+            [view(STOPPED, tab_id="w1:t7", pane_id="w1:p7")],
+            record,
+            client,
+            settings=Settings(focus_mode=FOCUS_LAST),
+        )
+        self.assertNotIn("tab_focus", [call[0] for call in client.calls])
 
 
 class FormatRowTest(unittest.TestCase):
-    def _view(self, state=RUNNING, origin="team"):
+    def _view(self, state=RUNNING, origin="team", name="api"):
         return ServiceView(
-            target=Target("api", "cmd", cwd=None, env={}, origin=origin),
+            target=Target(name, "cmd", cwd=None, env={}, origin=origin),
             state=state,
-            pane_id="w1:p2",
+            tab_id="w1:t7",
+            pane_id="w1:p7",
         )
 
     def test_view_mode_shows_no_checkbox(self):
@@ -437,23 +586,20 @@ class FormatRowTest(unittest.TestCase):
     def test_a_full_row_fits_the_narrowest_dashboard(self):
         """30 columns is the table's minimum width; past that, the origin marker
         was the first thing to disappear."""
-        view = ServiceView(
-            target=Target("a-very-long-name", "cmd", cwd=None, env={}, origin="local"),
-            state=RUNNING,
-            pane_id="w1:p2",
+        row = format_row(
+            self._view(origin="local", name="a-very-long-name"),
+            checked=True,
+            cursor=True,
+            mode=MODE_EDIT,
         )
-        row = format_row(view, checked=True, cursor=True, mode=MODE_EDIT)
         self.assertLessEqual(len(row), 29)
         self.assertTrue(row.endswith("*"), row)
         self.assertIn("running", row)
 
     def test_a_long_name_is_truncated_rather_than_pushing_the_columns(self):
-        view = ServiceView(
-            target=Target("abcdefghijklmnop", "cmd", cwd=None, env={}, origin="team"),
-            state=RUNNING,
-            pane_id="w1:p2",
+        row = format_row(
+            self._view(name="abcdefghijklmnop"), checked=False, cursor=False, mode=MODE_VIEW
         )
-        row = format_row(view, checked=False, cursor=False, mode=MODE_VIEW)
         self.assertIn("abcdefghijkl", row)
         self.assertNotIn("abcdefghijklm", row)
 
@@ -505,23 +651,27 @@ class VisibleLinesTest(unittest.TestCase):
         self.assertEqual(visible_lines(["a"], [], 0), [])
 
 
+class NoPanes:
+    def live_pane_ids(self):
+        return set()
+
+    def process_info(self, pane_id):
+        return {}
+
+    def has_foreground_command(self, info):
+        return False
+
+
+class Broken:
+    def live_pane_ids(self):
+        raise RuntimeError("herdr pane list failed: socket closed")
+
+
 class DashboardMessagesTest(unittest.TestCase):
     """An action's feedback must survive the refresh that follows it."""
 
     def test_refresh_does_not_erase_the_action_feedback(self):
-        from unittest.mock import patch
-        import tempfile
         from run_targets.tui import Dashboard
-
-        class NoPanes:
-            def panes_in_tab(self, tab_id):
-                return {}
-
-            def process_info(self, pane_id):
-                return {}
-
-            def has_foreground_command(self, info):
-                return False
 
         with tempfile.TemporaryDirectory() as root:
             # A duplicate inside a single file produces a warning on every read:
@@ -531,19 +681,48 @@ class DashboardMessagesTest(unittest.TestCase):
                     '[[target]]\nname = "api"\ncommand = "a"\n'
                     '[[target]]\nname = "api"\ncommand = "b"\n'
                 )
-            dashboard = Dashboard(tab_id="w1:t1", repo_root=root, warnings=[])
+            dashboard = Dashboard(workspace_id="w1", repo_root=root, warnings=[])
             dashboard.messages = ["api: already stopped, stop skipped"]
-            with patch("run_targets.tui.herdr", NoPanes()):
+            with patch("run_targets.tui.herdr", NoPanes()), \
+                 patch.dict(os.environ, {"HERDR_PLUGIN_CONFIG_DIR": root}, clear=False):
                 dashboard.refresh()
             self.assertEqual(dashboard.messages, ["api: already stopped, stop skipped"])
             self.assertTrue(dashboard.warnings)
+
+    def test_a_settings_warning_reaches_the_footer(self):
+        """A rejected focus_mode is silent otherwise, and would read as accepted."""
+        from run_targets.tui import Dashboard
+
+        with tempfile.TemporaryDirectory() as root:
+            with open(os.path.join(root, "config.toml"), "w", encoding="utf-8") as handle:
+                handle.write('[dashboard]\nfocus_mode = "middle"\n')
+            dashboard = Dashboard(workspace_id="w1", repo_root=root, warnings=[])
+            with patch("run_targets.tui.herdr", NoPanes()), \
+                 patch.dict(os.environ, {"HERDR_PLUGIN_CONFIG_DIR": root}, clear=False):
+                dashboard.refresh()
+            self.assertTrue(any("middle" in warning for warning in dashboard.warnings))
+            self.assertEqual(dashboard.settings.focus_mode, FOCUS_STAY)
+
+    def test_settings_are_re_read_on_every_refresh(self):
+        from run_targets.tui import Dashboard
+
+        with tempfile.TemporaryDirectory() as root:
+            dashboard = Dashboard(workspace_id="w1", repo_root=root, warnings=[])
+            with patch("run_targets.tui.herdr", NoPanes()), \
+                 patch.dict(os.environ, {"HERDR_PLUGIN_CONFIG_DIR": root}, clear=False):
+                dashboard.refresh()
+                self.assertEqual(dashboard.settings.label_prefix, "")
+                with open(os.path.join(root, "config.toml"), "w", encoding="utf-8") as handle:
+                    handle.write('[tabs]\nlabel_prefix = "run:"\n')
+                dashboard.refresh()
+                self.assertEqual(dashboard.settings.label_prefix, "run:")
 
     def test_action_messages_expire_so_warnings_come_back(self):
         """Without expiry, a single "skipped" would hide the configuration
         warnings forever, and those are permanent."""
         from run_targets.tui import MESSAGE_SECONDS, Dashboard
 
-        dashboard = Dashboard(tab_id="w1:t1", repo_root="/repo", warnings=["boom"])
+        dashboard = Dashboard(workspace_id="w1", repo_root="/repo", warnings=["boom"])
         with patch("run_targets.tui.time.monotonic", return_value=100.0):
             dashboard.set_messages(["api: already stopped, stop skipped"])
         dashboard.expire_messages(100.0 + MESSAGE_SECONDS - 0.1)
@@ -557,16 +736,11 @@ class DashboardTickTest(unittest.TestCase):
     """A failing Herdr call must not take the pane down with it."""
 
     def test_a_failing_refresh_keeps_the_previous_views_and_says_so(self):
-        import tempfile
         from run_targets.tui import Dashboard
 
-        class Broken:
-            def panes_in_tab(self, tab_id):
-                raise RuntimeError("herdr pane list failed: socket closed")
-
         with tempfile.TemporaryDirectory() as root:
-            dashboard = Dashboard(tab_id="w1:t1", repo_root=root, warnings=[])
-            previous = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+            dashboard = Dashboard(workspace_id="w1", repo_root=root, warnings=[])
+            previous = [view(RUNNING, tab_id="w1:t7", pane_id="w1:p7")]
             dashboard.views = previous
             with patch("run_targets.tui.herdr", Broken()), \
                  patch.dict(os.environ, {"HERDR_PLUGIN_STATE_DIR": root}, clear=False):
@@ -580,16 +754,11 @@ class DashboardTickTest(unittest.TestCase):
         """`act` is the most exposed moment -- the plugin has just chained
         several Herdr calls -- and its re-read must go through the same guarded
         route as the periodic loop."""
-        import tempfile
         from run_targets.tui import Dashboard
 
-        class Broken:
-            def panes_in_tab(self, tab_id):
-                raise RuntimeError("herdr pane list failed: socket closed")
-
         with tempfile.TemporaryDirectory() as root:
-            dashboard = Dashboard(tab_id="w1:t1", repo_root=root, warnings=[])
-            previous = [ServiceView(target=target(), state=RUNNING, pane_id="w1:p2")]
+            dashboard = Dashboard(workspace_id="w1", repo_root=root, warnings=[])
+            previous = [view(RUNNING, tab_id="w1:t7", pane_id="w1:p7")]
             dashboard.views = previous
             with patch("run_targets.tui.herdr", Broken()), \
                  patch.dict(os.environ, {"HERDR_PLUGIN_STATE_DIR": root}, clear=False):
@@ -600,41 +769,6 @@ class DashboardTickTest(unittest.TestCase):
             self.assertEqual(
                 dashboard.messages, ["herdr pane list failed: socket closed"]
             )
-
-
-class ServicePaneNamingTest(unittest.TestCase):
-    """A service pane carries its target's name, to be read at a glance."""
-
-    def test_a_created_pane_is_renamed_after_its_target(self):
-        tab = TabRecord("w1:p1", None, {})
-        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
-        views = [ServiceView(target=target("api"), state=IDLE, pane_id=None)]
-        apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertIn(("rename", "w1:p7", "api"), client.calls)
-
-    def test_the_rename_happens_before_the_command_runs(self):
-        """Otherwise the terminal title, already set by the command, would win."""
-        tab = TabRecord("w1:p1", None, {})
-        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7")
-        views = [ServiceView(target=target("api"), state=IDLE, pane_id=None)]
-        apply_action("start", views, tab, "/repo", client, "w1:t1")
-        kinds = [c[0] for c in client.calls]
-        self.assertLess(kinds.index("rename"), kinds.index("run"))
-
-    def test_a_failed_rename_does_not_stop_the_service(self):
-        tab = TabRecord("w1:p1", None, {})
-        client = FakeClient(panes={"w1:p1"}, split_result="w1:p7", fail={"rename"})
-        views = [ServiceView(target=target("api"), state=IDLE, pane_id=None)]
-        messages = apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertIn(("run", "w1:p7", "run-it"), client.calls)
-        self.assertEqual(messages, [])
-
-    def test_restarting_in_an_existing_pane_does_not_rename(self):
-        tab = TabRecord("w1:p1", "w1:p2", {"api": ServiceRecord("w1:p2")})
-        client = FakeClient(panes={"w1:p1", "w1:p2"})
-        views = [ServiceView(target=target("api"), state=STOPPED, pane_id="w1:p2")]
-        apply_action("start", views, tab, "/repo", client, "w1:t1")
-        self.assertNotIn("rename", [c[0] for c in client.calls])
 
 
 class FooterLinesTest(unittest.TestCase):
@@ -655,7 +789,7 @@ class FooterLinesTest(unittest.TestCase):
     def test_no_line_exceeds_the_width(self):
         for width in (30, 34, 40, 55, 71):
             for line in footer_lines(MODE_EDIT, width):
-                self.assertLessEqual(len(line), width, f"largeur {width}: {line!r}")
+                self.assertLessEqual(len(line), width, f"width {width}: {line!r}")
 
     def test_a_segment_is_never_split_across_lines(self):
         for line in footer_lines(MODE_EDIT, 30):
