@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -14,6 +15,14 @@ FOCUS_FIRST = "first"
 FOCUS_LAST = "last"
 FOCUS_MODES = (FOCUS_STAY, FOCUS_FIRST, FOCUS_LAST)
 
+PLACEMENT_OVERLAY = "overlay"
+PLACEMENT_POPUP = "popup"
+PLACEMENTS = (PLACEMENT_OVERLAY, PLACEMENT_POPUP)
+
+# Herdr takes a popup dimension as terminal cells (`24`) or a percentage of the
+# window (`"60%"`), and falls back to a half-size popup when one is omitted.
+DIMENSION = re.compile(r"^[0-9]+%?$")
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -22,6 +31,9 @@ class Settings:
     label_prefix: str = ""
     label_suffix: str = ""
     focus_mode: str = FOCUS_STAY
+    placement: str = PLACEMENT_OVERLAY
+    popup_width: str | None = None
+    popup_height: str | None = None
 
 
 def tab_label(name: str, settings: Settings) -> str:
@@ -70,11 +82,37 @@ def parse_settings(text: str, source: str) -> tuple[Settings, list[str]]:
         )
         mode = None
 
+    raw_placement = dashboard.get("placement")
+    placement = _text(raw_placement)
+    if raw_placement is not None and placement not in PLACEMENTS:
+        warnings.append(
+            f"{source}: unknown placement {raw_placement!r}; using {PLACEMENT_OVERLAY}"
+        )
+        placement = None
+
+    dimensions: dict[str, str | None] = {}
+    for key in ("popup_width", "popup_height"):
+        raw = dashboard.get(key)
+        if raw is None:
+            dimensions[key] = None
+            continue
+        # A number in the TOML is as valid as a string of cells; anything else
+        # is dropped rather than passed on to fail the open.
+        value = str(raw) if isinstance(raw, int) and not isinstance(raw, bool) else _text(raw)
+        if value is None or not DIMENSION.match(value):
+            warnings.append(f"{source}: unsupported {key} {raw!r}; using the default")
+            dimensions[key] = None
+        else:
+            dimensions[key] = value
+
     return (
         Settings(
             label_prefix=prefix or "",
             label_suffix=suffix or "",
             focus_mode=mode or FOCUS_STAY,
+            placement=placement or PLACEMENT_OVERLAY,
+            popup_width=dimensions["popup_width"],
+            popup_height=dimensions["popup_height"],
         ),
         warnings,
     )

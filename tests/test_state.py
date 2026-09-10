@@ -19,6 +19,7 @@ from run_targets.state import (
     save_state,
     state_path,
 )
+from run_targets.settings import PLACEMENT_OVERLAY, PLACEMENT_POPUP, Settings
 from toggle import current_workspace_id, decide_toggle, open_args
 
 
@@ -201,46 +202,86 @@ class DecideToggleScopeTest(unittest.TestCase):
 
 
 class OpenArgsTest(unittest.TestCase):
-    """Herdr answers `invalid_params` if an overlay is aimed: "overlay and popup
+    """Herdr answers `invalid_params` if the pane is aimed: "overlay and popup
     plugin panes target the active pane"."""
 
-    def test_the_placement_is_an_overlay(self):
+    def test_the_default_placement_is_an_overlay(self):
         with patch.dict(os.environ, {}, clear=True):
-            args = open_args()
+            args = open_args(Settings(), None)
         self.assertIn("--placement", args)
-        self.assertIn("overlay", args)
+        self.assertIn(PLACEMENT_OVERLAY, args)
 
     def test_neither_workspace_nor_target_pane_is_passed(self):
         with patch.dict(os.environ, {"HERDR_WORKSPACE_ID": "w7"}, clear=True):
-            args = open_args()
-        self.assertNotIn("--workspace", args)
-        self.assertNotIn("--target-pane", args)
+            for settings in (Settings(), Settings(placement=PLACEMENT_POPUP)):
+                args = open_args(settings, "w7")
+                self.assertNotIn("--workspace", args)
+                self.assertNotIn("--target-pane", args)
+
+    def test_an_overlay_is_never_sized(self):
+        """Herdr: "width and height are only supported when placement is popup"."""
+        settings = Settings(popup_width="60%", popup_height="20")
+        with patch.dict(os.environ, {}, clear=True):
+            args = open_args(settings, "w7")
+        self.assertNotIn("--width", args)
+        self.assertNotIn("--height", args)
+
+    def test_a_popup_carries_its_dimensions(self):
+        settings = Settings(placement=PLACEMENT_POPUP, popup_width="60%", popup_height="20")
+        with patch.dict(os.environ, {}, clear=True):
+            args = open_args(settings, "w7")
+        self.assertEqual(args[args.index("--width") + 1], "60%")
+        self.assertEqual(args[args.index("--height") + 1], "20")
+
+    def test_a_popup_without_dimensions_lets_herdr_choose(self):
+        with patch.dict(os.environ, {}, clear=True):
+            args = open_args(Settings(placement=PLACEMENT_POPUP), "w7")
+        self.assertNotIn("--width", args)
+        self.assertNotIn("--height", args)
+
+    def test_a_popup_is_handed_the_workspace_it_belongs_to(self):
+        """A popup belongs to no pane, so Herdr injects no HERDR_WORKSPACE_ID:
+        without this the dashboard would not know whose tabs it manages."""
+        with patch.dict(os.environ, {}, clear=True):
+            args = open_args(Settings(placement=PLACEMENT_POPUP), "w7")
+        self.assertIn("--env", args)
+        self.assertIn("HERDR_WORKSPACE_ID=w7", args)
+
+    def test_an_overlay_needs_no_injected_workspace(self):
+        with patch.dict(os.environ, {}, clear=True):
+            args = open_args(Settings(), "w7")
+        self.assertNotIn("HERDR_WORKSPACE_ID=w7", args)
 
     def test_it_carries_the_workspace_cwd_from_the_action_context(self):
         context = '{"workspace_id": "w5", "workspace_cwd": "/private/tmp/run-targets-demo"}'
         with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": context}, clear=True):
-            args = open_args()
+            args = open_args(Settings(), "w5")
         self.assertIn("--cwd", args)
         self.assertIn("/private/tmp/run-targets-demo", args)
 
     def test_it_omits_cwd_without_the_context_variable(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertNotIn("--cwd", open_args())
+            self.assertNotIn("--cwd", open_args(Settings(), None))
 
     def test_it_omits_cwd_with_invalid_json(self):
         with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": "not json"}, clear=True):
-            self.assertNotIn("--cwd", open_args())
+            self.assertNotIn("--cwd", open_args(Settings(), None))
 
     def test_it_omits_cwd_without_a_usable_workspace_cwd(self):
         with patch.dict(os.environ, {"HERDR_PLUGIN_CONTEXT_JSON": '{"workspace_id": "w5"}'}, clear=True):
-            self.assertNotIn("--cwd", open_args())
+            self.assertNotIn("--cwd", open_args(Settings(), "w5"))
 
 
 class ToggleMainTest(unittest.TestCase):
     def _run(self, state, panes, environment):
+        """`main` reads the real settings file, so the environment must point at
+        an empty config directory -- otherwise the developer's own popup
+        settings decide what this test sees."""
         import toggle as toggle_module
 
         calls = []
+        directory = tempfile.mkdtemp()
+        environment = {**environment, "HERDR_PLUGIN_CONFIG_DIR": directory}
         with patch.object(toggle_module.herdr, "list_panes", return_value=panes), \
              patch.object(
                  toggle_module.herdr, "pane_close",
@@ -300,6 +341,20 @@ class DashboardStartupTest(unittest.TestCase):
              contextlib.redirect_stderr(stderr):
             self.assertEqual(dashboard_module.main(), 1)
         self.assertIn("workspace", stderr.getvalue())
+
+    def test_a_missing_pane_id_is_not_fatal(self):
+        """A popup belongs to no pane, so Herdr injects no HERDR_PANE_ID. Only
+        the toggle's close branch depends on it."""
+        import dashboard as dashboard_module
+
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {"HERDR_WORKSPACE_ID": "w1"}, clear=True), \
+             patch("run_targets.config.subprocess.run", side_effect=FileNotFoundError("git")), \
+             contextlib.redirect_stderr(stderr):
+            self.assertEqual(dashboard_module.main(), 1)
+        # It got past the environment check and failed on the repository, which
+        # is the next test in line.
+        self.assertIn("is not inside a git repository", stderr.getvalue())
 
 
 MANIFEST_PATH = os.path.join(

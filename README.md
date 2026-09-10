@@ -160,21 +160,30 @@ fantoine.run-targets` prints it:
 ```toml
 # config.toml
 [tabs]
-label_prefix = ""      # e.g. "run:" to spot the plugin's tabs at a glance
+label_prefix = ""       # e.g. "run:" to spot the plugin's tabs at a glance
 label_suffix = ""
 
 [dashboard]
-focus_mode = "stay"    # stay | first | last
+focus_mode = "stay"     # stay | first | last
+placement = "overlay"   # overlay | popup
+popup_width = "45%"     # popup only: cells (24) or a percentage
+popup_height = "40%"
 ```
 
 | Setting | Effect |
 | --- | --- |
 | `label_prefix` / `label_suffix` | Wrap the target's name in the tab label. Applied when the tab is created, so changing them leaves existing tabs alone |
 | `focus_mode` | Where the focus goes after a batch launch: `stay` on the dashboard, or the `first` / `last` tab of the batch |
+| `placement` | `overlay` covers the pane you are on; `popup` is a centred, sized box |
+| `popup_width` / `popup_height` | Popup size, in terminal cells or a percentage of the window. Omit either for Herdr's half-size default. Ignored by `overlay`, which Herdr refuses to size |
 
 Edits take effect on the next launch — no dashboard restart. A value the plugin
 does not understand is reported in the dashboard's footer rather than applied
 silently.
+
+**Overlay or popup?** An overlay is an ordinary pane: your key closes it as well
+as opens it. A popup is centred and sized, but session-modal and belongs to no
+pane — so it is `q` that closes it, not the key that opened it.
 
 ## 📊 States
 
@@ -192,9 +201,9 @@ silently.
 with the repository: give it the same trust you give a `Makefile` in a fresh
 clone.
 
-**The dashboard floats over the pane you are on.** Herdr opens an overlay on the
-active pane, so press the key from the workspace whose services you want to
-manage.
+**The dashboard floats over the pane you are on.** Herdr opens an overlay — and
+a popup — on the active pane, so press the key from the workspace whose services
+you want to manage.
 
 **Stopping keeps the tab and its output.** A server that just crashed keeps its
 logs on screen, and restarting reuses the same tab. `x` is what removes a tab.
@@ -224,6 +233,8 @@ herdr plugin log list --plugin fantoine.run-targets --limit 20
 | `<file>: invalid TOML (...)` | Fix the syntax; the other file still applies meanwhile. |
 | `<file>: target 'x' has an unsafe cwd; skipped` | `cwd` must stay inside the repository — no absolute path, no `..`. |
 | `config.toml: unknown focus_mode '...'` | Use `stay`, `first` or `last`. |
+| `config.toml: unknown placement '...'` | Use `overlay` or `popup`. |
+| `config.toml: unsupported popup_width '...'` | A number of cells (`24`) or a percentage (`"45%"`). |
 | `<name>: still running after stop, restart skipped` | The service ignored the interrupt. Stop it yourself in its tab, then start it again. |
 | `<name>: herdr tab create failed: ...` | Herdr refused the tab. The message is its own; the service was not started and nothing was recorded. |
 | `... is not inside a git repository.` | Open the dashboard from a directory inside your project. |

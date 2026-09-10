@@ -22,11 +22,13 @@ from run_targets.tui import Dashboard, run_dashboard
 
 def main() -> int:
     workspace_id = os.environ.get("HERDR_WORKSPACE_ID")
+    # A popup belongs to no pane, so Herdr injects no `HERDR_PANE_ID` into it:
+    # the id is optional, and its absence only costs the toggle its close
+    # branch. The workspace is not optional -- it is what says whose tabs these
+    # are -- so `toggle` hands it over explicitly when it opens a popup.
     pane_id = os.environ.get("HERDR_PANE_ID")
-    if not workspace_id or not pane_id:
-        sys.stderr.write(
-            "No Herdr workspace or pane in the environment; nothing to show.\n"
-        )
+    if not workspace_id:
+        sys.stderr.write("No Herdr workspace in the environment; nothing to show.\n")
         return 1
 
     repo_root = resolve_repo_root(os.getcwd())
@@ -49,17 +51,19 @@ def main() -> int:
         sys.stderr.write(f"Could not prune the plugin state: {error}\n")
     # Reloaded right before writing so we do not overwrite another dashboard
     # that registered itself in the meantime.
-    register_control_pane(workspace_id, pane_id)
+    if pane_id:
+        register_control_pane(workspace_id, pane_id)
 
     dashboard = Dashboard(workspace_id=workspace_id, repo_root=repo_root, warnings=[])
     curses.wrapper(run_dashboard, dashboard)
 
     # On the way out the pane disappears: stop claiming to be the dashboard.
-    state = load_state()
-    record = state.get(workspace_id)
-    if record is not None and record.control_pane_id == pane_id:
-        record.control_pane_id = None
-        save_state(state)
+    if pane_id:
+        state = load_state()
+        record = state.get(workspace_id)
+        if record is not None and record.control_pane_id == pane_id:
+            record.control_pane_id = None
+            save_state(state)
     return 0
 
 

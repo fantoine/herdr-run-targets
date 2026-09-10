@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run_targets import herdr
+from run_targets.settings import PLACEMENT_POPUP, Settings, load_settings
 from run_targets.state import WorkspaceRecord, load_state
 
 PLUGIN_ID = "fantoine.run-targets"
@@ -81,20 +82,33 @@ def workspace_cwd_from_context() -> str | None:
     return cwd if isinstance(cwd, str) and cwd else None
 
 
-def open_args() -> list[str]:
+def open_args(settings: Settings, workspace_id: str | None) -> list[str]:
     """The command that opens the floating dashboard.
 
-    Neither `--workspace` nor `--target-pane`: Herdr answers
-    `invalid_params: "overlay and popup plugin panes target the active pane"` if
-    either is passed. The overlay lands on the active pane, which is the
+    Neither `--workspace` nor `--target-pane`, whichever the placement: Herdr
+    answers `invalid_params: "overlay and popup plugin panes target the active
+    pane"` if either is passed. Both land on the active pane, which is the
     workspace the key was pressed from.
+
+    An overlay covers its host pane; only a popup can be sized, and Herdr
+    refuses `--width`/`--height` on anything else. A popup also belongs to no
+    pane, so it receives none of `HERDR_WORKSPACE_ID`, `HERDR_TAB_ID` or
+    `HERDR_PANE_ID` -- the workspace has to be handed over explicitly, or the
+    dashboard would not know whose tabs it manages.
     """
     args = [
         "plugin", "pane", "open",
         "--plugin", PLUGIN_ID,
         "--entrypoint", ENTRYPOINT,
-        "--placement", "overlay",
+        "--placement", settings.placement,
     ]
+    if settings.placement == PLACEMENT_POPUP:
+        if settings.popup_width is not None:
+            args += ["--width", settings.popup_width]
+        if settings.popup_height is not None:
+            args += ["--height", settings.popup_height]
+        if workspace_id is not None:
+            args += ["--env", f"HERDR_WORKSPACE_ID={workspace_id}"]
     workspace_cwd = workspace_cwd_from_context()
     if workspace_cwd is not None:
         args += ["--cwd", workspace_cwd]
@@ -112,14 +126,18 @@ def main() -> int:
         sys.stderr.write(f"Could not list panes: {error}\n")
         return 1
 
-    decision, argument = decide_toggle(load_state(), live_panes, current_workspace_id())
+    workspace_id = current_workspace_id()
+    decision, argument = decide_toggle(load_state(), live_panes, workspace_id)
+    settings, warnings = load_settings()
+    for warning in warnings:
+        sys.stderr.write(warning + "\n")
 
     try:
         if decision == "close":
             herdr.pane_close(argument)
             print(f"Closed the dashboard pane {argument}.")
         else:
-            herdr.herdr_result(open_args())
+            herdr.herdr_result(open_args(settings, workspace_id))
             print("Opened the run-targets dashboard.")
     except RuntimeError as error:
         sys.stderr.write(f"{error}\n")

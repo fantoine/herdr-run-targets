@@ -226,9 +226,20 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
     curses.curs_set(0)
     stdscr.nodelay(True)
     last_refresh = 0.0
+    last_size = stdscr.getmaxyx()
 
     while True:
         now = time.monotonic()
+        # Herdr can hand the pane its final geometry after the process has
+        # started, and curses keeps the size it was born with until a resize is
+        # taken in. A layout drawn against the stale size puts the footer where
+        # nothing is displayed -- the help line stayed invisible until the pane
+        # was clicked, which is what finally delivered the resize.
+        size = stdscr.getmaxyx()
+        if size != last_size:
+            curses.update_lines_cols()
+            stdscr.clear()
+            last_size = size
         dashboard.expire_messages(now)
         if now - last_refresh >= REFRESH_SECONDS:
             dashboard.tick()
@@ -245,7 +256,11 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             key = stdscr.getch()
             if key == ord("q"):
                 return
-            if key == -1:
+            if key == curses.KEY_RESIZE:
+                curses.update_lines_cols()
+                stdscr.clear()
+                last_size = stdscr.getmaxyx()
+            elif key == -1:
                 time.sleep(0.05)
             continue
 
@@ -284,6 +299,11 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         key = stdscr.getch()
         if key == -1:
             time.sleep(0.05)
+            continue
+        if key == curses.KEY_RESIZE:
+            curses.update_lines_cols()
+            stdscr.clear()
+            last_size = stdscr.getmaxyx()
             continue
 
         if dashboard.mode == MODE_VIEW:
