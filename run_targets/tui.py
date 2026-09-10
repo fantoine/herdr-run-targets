@@ -12,8 +12,11 @@ from .services import ServiceView, apply_action, observe, resolve_selection
 from .settings import Settings, load_settings
 from .state import WorkspaceRecord, load_state, save_state
 
-MODE_VIEW = "view"
-MODE_EDIT = "edit"
+# Simple mode acts on the row under the cursor; multi-select mode acts on the
+# checked rows. The keys are the same in both, so a service can be handled on
+# its own without a detour through a second mode.
+MODE_SIMPLE = "simple"
+MODE_MULTI = "multiselect"
 
 REFRESH_SECONDS = 1.0
 
@@ -36,7 +39,7 @@ def format_row(view: ServiceView, checked: bool, cursor: bool, mode: str) -> str
     and with it the promise that "a different command is never a mystery".
     """
     marker = ">" if cursor else " "
-    box = ("[x] " if checked else "[ ] ") if mode == MODE_EDIT else ""
+    box = ("[x] " if checked else "[ ] ") if mode == MODE_MULTI else ""
     origin = LOCAL_MARKER if view.target.origin == ORIGIN_LOCAL else ""
     # One character short of the column, so a name that fills it still keeps a
     # space before the state: real target names ran to `community-sdk-playground`
@@ -81,10 +84,7 @@ def visible_lines(
 
 
 def footer_text(mode: str, has_local: bool = False) -> str:
-    """The help bar, which changes with the mode.
-
-    View mode offers no destructive key: it is a display first.
-    """
+    """The help bar, which changes with the mode."""
     return "  ".join(footer_segments(mode, has_local))
 
 
@@ -100,9 +100,9 @@ def footer_segments(mode: str, has_local: bool = False) -> list[str]:
     line of a popup that is 40% of the window tall, and would still leave the
     asterisk unexplained.
     """
-    if mode == MODE_EDIT:
+    if mode == MODE_MULTI:
         segments = [
-            "EDIT",
+            "MULTI",
             "space select",
             "enter start",
             "s stop",
@@ -111,7 +111,15 @@ def footer_segments(mode: str, has_local: bool = False) -> list[str]:
             "esc cancel",
         ]
     else:
-        segments = ["VIEW", "e edit", "q close"]
+        segments = [
+            "SIMPLE",
+            "enter start",
+            "s stop",
+            "r restart",
+            "x close",
+            "space multi",
+            "q close",
+        ]
     if has_local:
         segments.append("* local")
     return segments
@@ -147,7 +155,7 @@ class Dashboard:
         self.workspace_id = workspace_id
         self.repo_root = repo_root
         self.settings = Settings()
-        self.mode = MODE_VIEW
+        self.mode = MODE_SIMPLE
         self.cursor = 0
         self.checked: set[str] = set()
         self.warnings: list[str] = list(warnings)
@@ -180,6 +188,24 @@ class Dashboard:
         self.views = observe(self.record(), targets, herdr)
         if self.cursor >= len(self.views):
             self.cursor = max(0, len(self.views) - 1)
+
+    def toggle_check(self) -> None:
+        """Check or uncheck the row under the cursor, and follow the mode.
+
+        Checking is what opens multi-select mode, and unchecking the last row
+        leaves it: the mode is a consequence of the selection, never a state to
+        maintain by hand.
+        """
+        name = self.cursor_name()
+        if name is None:
+            return
+        self.checked.symmetric_difference_update({name})
+        self.mode = MODE_MULTI if self.checked else MODE_SIMPLE
+
+    def clear_selection(self) -> None:
+        """Drop the whole selection and fall back to the single-target mode."""
+        self.checked.clear()
+        self.mode = MODE_SIMPLE
 
     def set_messages(self, messages: list[str]) -> None:
         """Set the action messages, and the instant they went on screen."""
@@ -222,7 +248,9 @@ class Dashboard:
         )
         save_state(state)
         self.checked.clear()
-        self.mode = MODE_VIEW
+        # A batch is done once applied, so multi-select mode hands the keyboard
+        # back to the single-target mode rather than keeping stale checkboxes.
+        self.mode = MODE_SIMPLE
         # Same guarded route as the periodic loop: the refresh that follows an
         # action is the most exposed -- the plugin has just chained several
         # Herdr calls -- and it must no more than any other surface up to
@@ -322,7 +350,7 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         )
         for offset, line in enumerate(lines):
             stdscr.addstr(footer_top - len(lines) + offset, 0, line[: width - 1])
-        attribute = curses.A_REVERSE if dashboard.mode == MODE_EDIT else curses.A_DIM
+        attribute = curses.A_REVERSE if dashboard.mode == MODE_MULTI else curses.A_DIM
         for offset, line in enumerate(footer):
             stdscr.addstr(footer_top + offset, 0, line[: width - 1], attribute)
         stdscr.refresh()
@@ -337,32 +365,25 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             last_size = stdscr.getmaxyx()
             continue
 
-        if dashboard.mode == MODE_VIEW:
-            if key in (ord("q"),):
-                return
-            if key in (ord("e"),):
-                dashboard.mode = MODE_EDIT
-            elif key in (curses.KEY_DOWN, ord("j")):
-                dashboard.cursor = min(dashboard.cursor + 1, max(0, len(dashboard.views) - 1))
-            elif key in (curses.KEY_UP, ord("k")):
-                dashboard.cursor = max(dashboard.cursor - 1, 0)
-        else:
-            if key == 27:  # escape
-                dashboard.checked.clear()
-                dashboard.mode = MODE_VIEW
-            elif key == ord(" "):
-                name = dashboard.cursor_name()
-                if name is not None:
-                    dashboard.checked.symmetric_difference_update({name})
-            elif key in (curses.KEY_DOWN, ord("j")):
-                dashboard.cursor = min(dashboard.cursor + 1, max(0, len(dashboard.views) - 1))
-            elif key in (curses.KEY_UP, ord("k")):
-                dashboard.cursor = max(dashboard.cursor - 1, 0)
-            elif key in (curses.KEY_ENTER, 10, 13):
-                dashboard.act("start")
-            elif key == ord("s"):
-                dashboard.act("stop")
-            elif key == ord("r"):
-                dashboard.act("restart")
-            elif key == ord("x"):
-                dashboard.act("close")
+        if key in (curses.KEY_DOWN, ord("j")):
+            dashboard.cursor = min(dashboard.cursor + 1, max(0, len(dashboard.views) - 1))
+        elif key in (curses.KEY_UP, ord("k")):
+            dashboard.cursor = max(dashboard.cursor - 1, 0)
+        # The action keys are shared: in simple mode the selection is the row
+        # under the cursor, in multi-select mode it is every checked row.
+        elif key in (curses.KEY_ENTER, 10, 13):
+            dashboard.act("start")
+        elif key == ord("s"):
+            dashboard.act("stop")
+        elif key == ord("r"):
+            dashboard.act("restart")
+        elif key == ord("x"):
+            dashboard.act("close")
+        elif key == ord(" "):
+            # Checking a row is what opens multi-select mode: one key for
+            # "these ones too", rather than a mode to enter before selecting.
+            dashboard.toggle_check()
+        elif key == 27:  # escape
+            dashboard.clear_selection()
+        elif key == ord("q") and dashboard.mode == MODE_SIMPLE:
+            return

@@ -35,8 +35,8 @@ from run_targets.state import ServiceRecord, WorkspaceRecord
 from run_targets.tui import (
     footer_lines,
     use_terminal_colors,
-    MODE_EDIT,
-    MODE_VIEW,
+    MODE_MULTI,
+    MODE_SIMPLE,
     empty_text,
     footer_text,
     format_row,
@@ -557,30 +557,30 @@ class FormatRowTest(unittest.TestCase):
             pane_id="w1:p7",
         )
 
-    def test_view_mode_shows_no_checkbox(self):
-        row = format_row(self._view(), checked=False, cursor=False, mode=MODE_VIEW)
+    def test_simple_mode_shows_no_checkbox(self):
+        row = format_row(self._view(), checked=False, cursor=False, mode=MODE_SIMPLE)
         self.assertNotIn("[", row)
         self.assertIn("api", row)
         self.assertIn("running", row)
 
-    def test_edit_mode_shows_an_empty_checkbox(self):
-        row = format_row(self._view(), checked=False, cursor=False, mode=MODE_EDIT)
+    def test_multi_mode_shows_an_empty_checkbox(self):
+        row = format_row(self._view(), checked=False, cursor=False, mode=MODE_MULTI)
         self.assertIn("[ ]", row)
 
-    def test_edit_mode_shows_a_checked_checkbox(self):
-        row = format_row(self._view(), checked=True, cursor=False, mode=MODE_EDIT)
+    def test_multi_mode_shows_a_checked_checkbox(self):
+        row = format_row(self._view(), checked=True, cursor=False, mode=MODE_MULTI)
         self.assertIn("[x]", row)
 
     def test_the_cursor_row_is_marked(self):
-        row = format_row(self._view(), checked=False, cursor=True, mode=MODE_VIEW)
+        row = format_row(self._view(), checked=False, cursor=True, mode=MODE_SIMPLE)
         self.assertTrue(row.startswith(">"))
 
     def test_a_local_target_is_marked(self):
-        row = format_row(self._view(origin="local"), checked=False, cursor=False, mode=MODE_VIEW)
+        row = format_row(self._view(origin="local"), checked=False, cursor=False, mode=MODE_SIMPLE)
         self.assertTrue(row.endswith("*"), row)
 
     def test_a_team_target_carries_no_origin_marker(self):
-        row = format_row(self._view(origin="team"), checked=False, cursor=False, mode=MODE_VIEW)
+        row = format_row(self._view(origin="team"), checked=False, cursor=False, mode=MODE_SIMPLE)
         self.assertNotIn("team", row)
         self.assertNotIn("*", row)
 
@@ -591,7 +591,7 @@ class FormatRowTest(unittest.TestCase):
             self._view(origin="local", name="a-very-long-name"),
             checked=True,
             cursor=True,
-            mode=MODE_EDIT,
+            mode=MODE_MULTI,
         )
         self.assertLessEqual(len(row), 29)
         self.assertTrue(row.endswith("*"), row)
@@ -599,7 +599,7 @@ class FormatRowTest(unittest.TestCase):
 
     def test_a_long_name_is_truncated_rather_than_pushing_the_columns(self):
         row = format_row(
-            self._view(name="abcdefghijklmnop"), checked=False, cursor=False, mode=MODE_VIEW
+            self._view(name="abcdefghijklmnop"), checked=False, cursor=False, mode=MODE_SIMPLE
         )
         self.assertIn("abcdefghijk", row)
         self.assertNotIn("abcdefghijkl", row)
@@ -610,35 +610,45 @@ class FormatRowTest(unittest.TestCase):
             self._view(name="community-sdk-playground"),
             checked=False,
             cursor=False,
-            mode=MODE_VIEW,
+            mode=MODE_SIMPLE,
         )
         self.assertIn("community-s running", row)
 
 
 class FooterTextTest(unittest.TestCase):
-    def test_view_mode_advertises_edit_and_quit(self):
-        self.assertEqual(footer_text(MODE_VIEW), "VIEW  e edit  q close")
-
-    def test_edit_mode_advertises_the_actions(self):
+    def test_simple_mode_advertises_the_actions_and_the_way_into_multi(self):
+        """The action keys are reachable straight from the list: handling one
+        service must not require entering a second mode first."""
         self.assertEqual(
-            footer_text(MODE_EDIT),
-            "EDIT  space select  enter start  s stop  r restart  x close  esc cancel",
+            footer_text(MODE_SIMPLE),
+            "SIMPLE  enter start  s stop  r restart  x close  space multi  q close",
         )
+
+    def test_multi_mode_advertises_the_same_actions_plus_selection(self):
+        self.assertEqual(
+            footer_text(MODE_MULTI),
+            "MULTI  space select  enter start  s stop  r restart  x close  esc cancel",
+        )
+
+    def test_only_simple_mode_advertises_closing_the_dashboard(self):
+        """`q` would be a surprising way out with a batch checked."""
+        self.assertIn("q close", footer_text(MODE_SIMPLE))
+        self.assertNotIn("q close", footer_text(MODE_MULTI))
 
     def test_a_local_target_gets_the_asterisk_explained(self):
         """The table has no header row, so a bare `*` says nothing on its own."""
-        self.assertEqual(
-            footer_text(MODE_VIEW, has_local=True), "VIEW  e edit  q close  * local"
+        self.assertTrue(
+            footer_text(MODE_SIMPLE, has_local=True).endswith("* local")
         )
 
     def test_the_legend_stays_away_when_no_target_is_local(self):
-        self.assertNotIn("local", footer_text(MODE_EDIT, has_local=False))
+        self.assertNotIn("local", footer_text(MODE_MULTI, has_local=False))
 
     def test_the_legend_follows_into_edit_mode(self):
-        self.assertTrue(footer_text(MODE_EDIT, has_local=True).endswith("* local"))
+        self.assertTrue(footer_text(MODE_MULTI, has_local=True).endswith("* local"))
 
     def test_the_legend_wraps_like_any_other_segment(self):
-        lines = footer_lines(MODE_EDIT, 34, has_local=True)
+        lines = footer_lines(MODE_MULTI, 34, has_local=True)
         self.assertIn("* local", " ".join(lines))
         for line in lines:
             self.assertLessEqual(len(line), 34)
@@ -761,6 +771,68 @@ class DashboardMessagesTest(unittest.TestCase):
         self.assertEqual(dashboard.warnings, ["boom"])
 
 
+class DashboardModeTest(unittest.TestCase):
+    """The mode follows the selection: checking a row is the way into
+    multi-select, and emptying it is the way out."""
+
+    def _dashboard(self):
+        from run_targets.tui import Dashboard
+
+        dashboard = Dashboard(workspace_id="w1", repo_root="/repo", warnings=[])
+        dashboard.views = [view(IDLE, "api"), view(IDLE, "web")]
+        return dashboard
+
+    def test_a_fresh_dashboard_acts_on_one_target(self):
+        from run_targets.tui import MODE_SIMPLE
+
+        self.assertEqual(self._dashboard().mode, MODE_SIMPLE)
+
+    def test_checking_a_row_enters_multi_select(self):
+        from run_targets.tui import MODE_MULTI
+
+        dashboard = self._dashboard()
+        dashboard.toggle_check()
+        self.assertEqual(dashboard.checked, {"api"})
+        self.assertEqual(dashboard.mode, MODE_MULTI)
+
+    def test_unchecking_the_last_row_leaves_multi_select(self):
+        from run_targets.tui import MODE_SIMPLE
+
+        dashboard = self._dashboard()
+        dashboard.toggle_check()
+        dashboard.toggle_check()
+        self.assertEqual(dashboard.checked, set())
+        self.assertEqual(dashboard.mode, MODE_SIMPLE)
+
+    def test_a_second_row_stays_in_multi_select(self):
+        from run_targets.tui import MODE_MULTI
+
+        dashboard = self._dashboard()
+        dashboard.toggle_check()
+        dashboard.cursor = 1
+        dashboard.toggle_check()
+        self.assertEqual(dashboard.checked, {"api", "web"})
+        self.assertEqual(dashboard.mode, MODE_MULTI)
+
+    def test_an_empty_list_has_nothing_to_check(self):
+        from run_targets.tui import MODE_SIMPLE
+
+        dashboard = self._dashboard()
+        dashboard.views = []
+        dashboard.toggle_check()
+        self.assertEqual(dashboard.checked, set())
+        self.assertEqual(dashboard.mode, MODE_SIMPLE)
+
+    def test_clearing_the_selection_returns_to_simple_mode(self):
+        from run_targets.tui import MODE_SIMPLE
+
+        dashboard = self._dashboard()
+        dashboard.toggle_check()
+        dashboard.clear_selection()
+        self.assertEqual(dashboard.checked, set())
+        self.assertEqual(dashboard.mode, MODE_SIMPLE)
+
+
 class DashboardTickTest(unittest.TestCase):
     """A failing Herdr call must not take the pane down with it."""
 
@@ -824,11 +896,17 @@ class FooterLinesTest(unittest.TestCase):
     not exist for the user."""
 
     def test_a_wide_pane_keeps_one_line(self):
-        lines = footer_lines(MODE_EDIT, 100)
-        self.assertEqual(lines, [footer_text(MODE_EDIT)])
+        lines = footer_lines(MODE_MULTI, 100)
+        self.assertEqual(lines, [footer_text(MODE_MULTI)])
+
+    def test_simple_mode_wraps_without_losing_a_key(self):
+        lines = footer_lines(MODE_SIMPLE, 34)
+        joined = " ".join(lines)
+        for key in ("enter start", "s stop", "r restart", "x close", "space multi", "q close"):
+            self.assertIn(key, joined)
 
     def test_a_narrow_pane_wraps_without_losing_a_key(self):
-        lines = footer_lines(MODE_EDIT, 34)
+        lines = footer_lines(MODE_MULTI, 34)
         self.assertGreater(len(lines), 1)
         joined = " ".join(lines)
         for key in ("space", "enter", "s stop", "r restart", "x close", "esc"):
@@ -836,19 +914,21 @@ class FooterLinesTest(unittest.TestCase):
 
     def test_no_line_exceeds_the_width(self):
         for width in (30, 34, 40, 55, 71):
-            for line in footer_lines(MODE_EDIT, width):
+            for line in footer_lines(MODE_MULTI, width):
                 self.assertLessEqual(len(line), width, f"width {width}: {line!r}")
 
     def test_a_segment_is_never_split_across_lines(self):
-        for line in footer_lines(MODE_EDIT, 30):
+        for line in footer_lines(MODE_MULTI, 30):
             self.assertFalse(line.startswith(" "))
             self.assertFalse(line.endswith(" "))
 
-    def test_view_mode_still_fits_on_one_line(self):
-        self.assertEqual(footer_lines(MODE_VIEW, 34), [footer_text(MODE_VIEW)])
+    def test_no_simple_mode_line_exceeds_the_width(self):
+        for width in (30, 34, 40, 55, 71):
+            for line in footer_lines(MODE_SIMPLE, width):
+                self.assertLessEqual(len(line), width, f"width {width}: {line!r}")
 
     def test_an_absurdly_narrow_width_still_yields_every_segment(self):
-        joined = " ".join(footer_lines(MODE_EDIT, 8))
+        joined = " ".join(footer_lines(MODE_MULTI, 8))
         for key in ("space", "x close", "esc"):
             self.assertIn(key, joined)
 

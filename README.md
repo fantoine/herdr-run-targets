@@ -42,10 +42,10 @@ RUN TARGETS  my-project
 > api         idle
   web         idle
 
-VIEW  e edit  q close
+SIMPLE  enter start  s stop  r restart  x close  space multi  q close
 ```
 
-Press `e`, `space` on each, then `enter`. Two tabs appear, each named after its
+Press `space` on each, then `enter`. Two tabs appear, each named after its
 target:
 
 ```
@@ -53,8 +53,8 @@ target:
 ```
 
 An hour later the API needs a restart after a config change. Call the dashboard
-back up, cursor on `api`, then `e` `r`. It stops, restarts in the same tab, and
-the previous output is still above it.
+back up, cursor on `api`, then `r`. It stops, restarts in the same tab, and the
+previous output is still above it.
 
 </details>
 
@@ -133,25 +133,28 @@ the targets of the other one.
 
 ### Drive the dashboard
 
-The dashboard starts read only — press `e` before anything can act on a service.
+The action keys are the same in both modes; what changes is what they apply to.
 
-| View mode | |
+| Simple mode | |
 | --- | --- |
 | `↑` `↓` / `j` `k` | move the cursor |
-| `e` | enter edit mode |
+| `enter` | start the target under the cursor |
+| `s` | stop it |
+| `r` | restart it |
+| `x` | close its tab |
+| `space` | check it — this is what enters multi-select |
 | `q` | close the dashboard |
 
-| Edit mode | |
+| Multi-select mode | |
 | --- | --- |
-| `space` | check / uncheck |
-| `enter` | start |
-| `s` | stop |
-| `r` | restart |
-| `x` | close the service's tab |
-| `esc` | uncheck everything, back to view mode |
+| `space` | check / uncheck; unchecking the last row leaves the mode |
+| `enter` `s` `r` `x` | apply to every checked row |
+| `esc` | uncheck everything, back to simple mode |
 
-An action applies to every checked row, or to the row under the cursor when
-nothing is checked. Check several and start, stop or restart them in one press.
+So one service is handled straight from the list, and a batch is one `space`
+away. An action applies to the checked rows when there are any, and to the row
+under the cursor otherwise; either way the dashboard returns to simple mode once
+it has run.
 
 ## ⚙️ Settings
 
@@ -214,6 +217,10 @@ own, so the key brings it straight back.
 
 **An action with nothing to do says so** rather than failing silently — pressing
 `s` on a stopped service prints `api: already stopped, stop skipped`.
+
+**The action keys act immediately**, with no confirmation: `x` on the row under
+the cursor closes that service's tab. Its output goes with the tab, so reach for
+`s` when you still want to read it.
 
 **Restarting waits for the service to actually stop**, up to three seconds. A
 service that ignores the interrupt is left alone rather than being sent a
