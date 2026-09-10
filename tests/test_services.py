@@ -788,13 +788,13 @@ class FooterTextTest(unittest.TestCase):
         service must not require entering a second mode first."""
         self.assertEqual(
             footer_text(MODE_SIMPLE),
-            "SIMPLE   enter start   s stop   r restart   x close   space multi   esc close",
+            "SIMPLE   enter start   s stop   r restart   x close   space multi   a all   esc close",
         )
 
     def test_multi_mode_advertises_the_same_actions_plus_selection(self):
         self.assertEqual(
             footer_text(MODE_MULTI),
-            "MULTI   space select   enter start   s stop   r restart   x close   esc cancel",
+            "MULTI   space select   a all   enter start   s stop   r restart   x close   esc cancel",
         )
 
     def test_only_simple_mode_advertises_closing_the_dashboard(self):
@@ -991,6 +991,44 @@ class DashboardModeTest(unittest.TestCase):
         self.assertEqual(dashboard.checked, set())
         self.assertEqual(dashboard.mode, MODE_SIMPLE)
 
+    def test_a_selects_everything_and_enters_multi_select(self):
+        from run_targets.tui import MODE_MULTI
+
+        dashboard = self._dashboard()
+        dashboard.toggle_all()
+        self.assertEqual(dashboard.checked, {"api", "web"})
+        self.assertEqual(dashboard.mode, MODE_MULTI)
+
+    def test_a_on_a_full_selection_clears_it(self):
+        """With everything checked, the only thing left to want is nothing."""
+        from run_targets.tui import MODE_SIMPLE
+
+        dashboard = self._dashboard()
+        dashboard.toggle_all()
+        dashboard.toggle_all()
+        self.assertEqual(dashboard.checked, set())
+        self.assertEqual(dashboard.mode, MODE_SIMPLE)
+
+    def test_a_on_a_partial_selection_completes_it(self):
+        """Halfway through picking, `a` means "actually, all of them"."""
+        dashboard = self._dashboard()
+        dashboard.toggle_check()
+        dashboard.toggle_all()
+        self.assertEqual(dashboard.checked, {"api", "web"})
+
+    def test_a_selection_of_names_that_vanished_does_not_count_as_full(self):
+        """A target dropped from the config must not make `a` read as "clear"."""
+        dashboard = self._dashboard()
+        dashboard.checked = {"api", "ghost"}
+        dashboard.toggle_all()
+        self.assertEqual(dashboard.checked, {"api", "web"})
+
+    def test_a_on_an_empty_list_does_nothing(self):
+        dashboard = self._dashboard()
+        dashboard.views = []
+        dashboard.toggle_all()
+        self.assertEqual(dashboard.checked, set())
+
     def test_escape_cancels_the_selection_before_closing_anything(self):
         from run_targets.tui import MODE_SIMPLE
 
@@ -1094,7 +1132,7 @@ class FooterLinesTest(unittest.TestCase):
     def test_simple_mode_wraps_without_losing_a_key(self):
         lines = footer_lines(MODE_SIMPLE, 34)
         joined = " ".join(lines)
-        for key in ("enter start", "s stop", "r restart", "x close", "space multi", "esc close"):
+        for key in ("enter start", "s stop", "r restart", "x close", "space multi", "a all"):
             self.assertIn(key, joined)
 
     def test_a_narrow_pane_wraps_without_losing_a_key(self):

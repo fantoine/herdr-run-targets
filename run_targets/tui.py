@@ -136,6 +136,7 @@ def footer_items(mode: str, has_local: bool = False) -> list[tuple[str, str, str
         items = [
             (CHIP, "MULTI", ""),
             (KEY, "space", "select"),
+            (KEY, "a", "all"),
             (KEY, "enter", "start"),
             (KEY, "s", "stop"),
             (KEY, "r", "restart"),
@@ -150,6 +151,7 @@ def footer_items(mode: str, has_local: bool = False) -> list[tuple[str, str, str
             (KEY, "r", "restart"),
             (KEY, "x", "close"),
             (KEY, "space", "multi"),
+            (KEY, "a", "all"),
             (KEY, "esc", "close"),
         ]
     if has_local:
@@ -259,6 +261,19 @@ class Dashboard:
         if name is None:
             return
         self.checked.symmetric_difference_update({name})
+        self.mode = MODE_MULTI if self.checked else MODE_SIMPLE
+
+    def toggle_all(self) -> None:
+        """Check every row, or clear the selection when it is already whole.
+
+        One key for both directions, like `space` on a row: with everything
+        checked, the only thing left to want is nothing checked. The mode
+        follows the selection, so this is also a way into multi-select.
+        """
+        names = self.names()
+        if not names:
+            return
+        self.checked = set() if self.checked >= set(names) else set(names)
         self.mode = MODE_MULTI if self.checked else MODE_SIMPLE
 
     def clear_selection(self) -> None:
@@ -537,6 +552,8 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             # Checking a row is what opens multi-select mode: one key for
             # "these ones too", rather than a mode to enter before selecting.
             dashboard.toggle_check()
+        elif key == ord("a"):
+            dashboard.toggle_all()
         elif key == 27:  # escape
             if dashboard.escape():
                 return

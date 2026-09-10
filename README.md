@@ -5,7 +5,7 @@
 
   **Every dev service your repo declares, one keypress away.**
 
-  ![version](https://img.shields.io/badge/version-0.3.0-2B8ABF)
+  ![version](https://img.shields.io/badge/version-0.3.1-2B8ABF)
   [![CI](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml/badge.svg)](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml)
   ![license](https://img.shields.io/badge/license-MIT-blue)
   ![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.2-4AABDF)
@@ -43,7 +43,7 @@ RUN TARGETS  my-project
 > api         idle
   web         idle
 
-SIMPLE   enter start   s stop   r restart   x close   space multi   esc close
+SIMPLE   enter start   s stop   r restart   x close   space multi   a all   esc close
 ```
 
 Press `space` on each, then `enter`. Two tabs appear, each named after its
@@ -144,11 +144,13 @@ The action keys are the same in both modes; what changes is what they apply to.
 | `r` | restart it |
 | `x` | close its tab |
 | `space` | check it — this is what enters multi-select |
+| `a` | check every target |
 | `esc` / `q` | close the dashboard |
 
 | Multi-select mode | |
 | --- | --- |
 | `space` | check / uncheck; unchecking the last row leaves the mode |
+| `a` | check everything, or clear the selection when it is already whole |
 | `enter` `s` `r` `x` | apply to every checked row |
 | `esc` | uncheck everything, back to simple mode — press it again to close |
 
