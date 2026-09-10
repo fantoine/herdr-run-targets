@@ -52,6 +52,7 @@ from run_targets.tui import (
     format_row,
     header_text,
     item_text,
+    item_width,
     name_column,
     use_terminal_colors,
     visible_lines,
@@ -766,6 +767,20 @@ class FooterItemsTest(unittest.TestCase):
         self.assertNotIn(("key", "*", "local"), footer_items(MODE_SIMPLE))
 
 
+class ItemWidthTest(unittest.TestCase):
+    """What is measured has to be what is drawn, or the bar is clipped instead
+    of wrapped -- the simple-mode footer lost `* local` to exactly this."""
+
+    def test_the_chip_is_measured_with_the_padding_it_is_drawn_with(self):
+        self.assertEqual(item_width(("chip", "SIMPLE", "")), len(" SIMPLE "))
+
+    def test_a_key_and_its_description_are_measured_with_their_space(self):
+        self.assertEqual(item_width(("key", "esc", "cancel")), len("esc cancel"))
+
+    def test_a_key_without_a_description_is_measured_alone(self):
+        self.assertEqual(item_width(("key", "q", "")), len("q"))
+
+
 class FooterRowsTest(unittest.TestCase):
     def test_a_wide_pane_keeps_every_block_on_one_line(self):
         rows = footer_rows(footer_items(MODE_MULTI), 120)
@@ -780,6 +795,30 @@ class FooterRowsTest(unittest.TestCase):
     def test_a_block_wider_than_the_pane_takes_its_line_alone(self):
         rows = footer_rows(footer_items(MODE_MULTI), 4)
         self.assertTrue(all(len(row) == 1 for row in rows))
+
+    def test_no_row_is_wider_than_the_pane_once_painted(self):
+        """The regression: a bar that measured as fitting overflowed by the
+        chip's two columns of padding and was cut at the edge."""
+        from run_targets.tui import BLOCK_GAP
+
+        for mode in (MODE_SIMPLE, MODE_MULTI):
+            items = footer_items(mode, has_local=True)
+            painted = sum(item_width(item) for item in items) + len(BLOCK_GAP) * (
+                len(items) - 1
+            )
+            for width in range(20, painted + 3):
+                for row in footer_rows(items, width):
+                    drawn = sum(item_width(item) for item in row) + len(BLOCK_GAP) * (
+                        len(row) - 1
+                    )
+                    if len(row) > 1:
+                        self.assertLessEqual(drawn, width, f"{mode} at {width}")
+
+    def test_the_simple_bar_wraps_rather_than_losing_its_last_block(self):
+        items = footer_items(MODE_SIMPLE, has_local=True)
+        rows = footer_rows(items, 96)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[-1][-1], ("key", "*", "local"))
 
 
 class FooterTextTest(unittest.TestCase):

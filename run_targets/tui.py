@@ -169,6 +169,20 @@ def item_text(item: tuple[str, str, str]) -> str:
     return f"{key} {description}" if description else key
 
 
+def item_width(item: tuple[str, str, str]) -> int:
+    """How many columns a block takes once painted.
+
+    Not `len(item_text(...))`: the chip is drawn with a space each side so the
+    reversed background reads as a label. Measuring it without them made the
+    footer overflow by exactly two columns, and the simple-mode bar -- the
+    longer of the two -- lost its tail to clipping instead of wrapping.
+    """
+    kind, key, description = item
+    if kind == CHIP:
+        return len(key) + 2
+    return len(key) + (1 + len(description) if description else 0)
+
+
 def footer_rows(
     items: Sequence[tuple[str, str, str]], width: int
 ) -> list[list[tuple[str, str, str]]]:
@@ -182,7 +196,7 @@ def footer_rows(
     current: list[tuple[str, str, str]] = []
     used = 0
     for item in items:
-        length = len(item_text(item))
+        length = item_width(item)
         if not current:
             current, used = [item], length
         elif used + len(BLOCK_GAP) + length <= width:
@@ -202,7 +216,11 @@ def footer_text(mode: str, has_local: bool = False) -> str:
 
 
 def footer_lines(mode: str, width: int, has_local: bool = False) -> list[str]:
-    """The wrapped help bar, as plain text lines."""
+    """The wrapped help bar, as plain text lines.
+
+    The lines are shorter than `width` by the two columns the chip's padding
+    takes when painted -- what is measured is what is drawn.
+    """
     return [
         BLOCK_GAP.join(item_text(item) for item in row)
         for row in footer_rows(footer_items(mode, has_local), width)
@@ -489,7 +507,10 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
             view.target.origin == ORIGIN_LOCAL for view in dashboard.views
         )
         items = footer_items(dashboard.mode, has_local)
-        footer = footer_rows(items, max(1, width - 1))
+        # One column short of the pane: curses refuses the bottom-right cell,
+        # and the wrap has to be measured against the width it is painted at.
+        footer_width = max(1, width - 1)
+        footer = footer_rows(items, footer_width)
         rows_capacity = max(0, height - 3 - len(footer))
         column = name_column(
             [view.target.name for view in dashboard.views], dashboard.mode, width - 1
@@ -517,7 +538,7 @@ def run_dashboard(stdscr, dashboard: Dashboard) -> None:
         for offset, line in enumerate(lines):
             stdscr.addstr(footer_top - len(lines) + offset, 0, line[: width - 1])
         for offset, row in enumerate(footer):
-            draw_footer_row(stdscr, footer_top + offset, row, width, colored)
+            draw_footer_row(stdscr, footer_top + offset, row, footer_width, colored)
         stdscr.refresh()
 
         key = stdscr.getch()

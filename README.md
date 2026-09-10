@@ -5,7 +5,7 @@
 
   **Every dev service your repo declares, one keypress away.**
 
-  ![version](https://img.shields.io/badge/version-0.3.1-2B8ABF)
+  ![version](https://img.shields.io/badge/version-0.3.2-2B8ABF)
   [![CI](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml/badge.svg)](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml)
   ![license](https://img.shields.io/badge/license-MIT-blue)
   ![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.2-4AABDF)

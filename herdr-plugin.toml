@@ -1,6 +1,6 @@
 id = "fantoine.run-targets"
 name = "Run Targets"
-version = "0.3.1"
+version = "0.3.2"
 min_herdr_version = "0.8.2"
 description = "Launch, stop and restart a repository's dev services from a dashboard pane"
 platforms = ["linux", "macos"]
