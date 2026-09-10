@@ -4,19 +4,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
+import tomllib
+from dataclasses import dataclass, field
+from typing import Sequence
 
-# The version guard comes before `tomllib`: that module only exists from 3.11
-# on, so importing it any higher would kill the plugin with an unreadable
-# `ModuleNotFoundError` on exactly the versions this message is meant to greet.
-# The manifest invokes a bare `python3`; nothing guarantees it is a 3.11.
-if sys.version_info < (3, 11):
-    sys.stderr.write("run-targets requires Python 3.11 or newer.\n")
-    raise SystemExit(1)
-
-import tomllib  # noqa: E402  (deliberately after the version guard)
-from dataclasses import dataclass, field  # noqa: E402
-from typing import Sequence  # noqa: E402
+# The Python version guard lives in this package's __init__, which runs before
+# this module can import `tomllib`.
 
 TEAM_CONFIG_FILE = ".herdr-run.toml"
 LOCAL_CONFIG_FILE = ".herdr-run.local.toml"
