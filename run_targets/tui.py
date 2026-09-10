@@ -38,7 +38,10 @@ def format_row(view: ServiceView, checked: bool, cursor: bool, mode: str) -> str
     marker = ">" if cursor else " "
     box = ("[x] " if checked else "[ ] ") if mode == MODE_EDIT else ""
     origin = LOCAL_MARKER if view.target.origin == ORIGIN_LOCAL else ""
-    name = view.target.name[:NAME_WIDTH]
+    # One character short of the column, so a name that fills it still keeps a
+    # space before the state: real target names ran to `community-sdk-playground`
+    # and printed `community-sdidle`.
+    name = view.target.name[: NAME_WIDTH - 1]
     return f"{marker} {box}{name:<{NAME_WIDTH}}{view.state:<{STATE_WIDTH}}{origin}"
 
 

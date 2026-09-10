@@ -600,8 +600,18 @@ class FormatRowTest(unittest.TestCase):
         row = format_row(
             self._view(name="abcdefghijklmnop"), checked=False, cursor=False, mode=MODE_VIEW
         )
-        self.assertIn("abcdefghijkl", row)
-        self.assertNotIn("abcdefghijklm", row)
+        self.assertIn("abcdefghijk", row)
+        self.assertNotIn("abcdefghijkl", row)
+
+    def test_a_name_that_fills_the_column_keeps_a_space_before_the_state(self):
+        """`community-sdk-playground` printed `community-sdidle` before this."""
+        row = format_row(
+            self._view(name="community-sdk-playground"),
+            checked=False,
+            cursor=False,
+            mode=MODE_VIEW,
+        )
+        self.assertIn("community-s running", row)
 
 
 class FooterTextTest(unittest.TestCase):
