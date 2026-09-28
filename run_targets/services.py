@@ -162,15 +162,22 @@ class ActionOutcome:
     launched: list[str]
 
 
+# Every mode but `stay` hands the screen back once a launch is through. `first`
+# and `last` did not use to: an overlay stayed behind in the tab just left, and
+# a popup -- session-modal -- stayed in front of the tab just focused.
+CLOSING_MODES = (FOCUS_CLOSE, FOCUS_FIRST, FOCUS_LAST)
+
+
 def should_close_after(action: str, mode: str, outcome: ActionOutcome) -> bool:
     """Whether the dashboard should get out of the way once a batch has run.
 
-    Only after a launch, only in `close` mode, and only when the batch has
-    nothing to say: a skipped action or a failure is the one thing a closing
-    dashboard would take off screen before it was read.
+    Only after a launch, never in `stay` mode, and only when the batch has
+    nothing to say: a skipped action or a failure -- a focus that did not take
+    included -- is the one thing a closing dashboard would take off screen
+    before it was read.
     """
     return (
-        mode == FOCUS_CLOSE
+        mode in CLOSING_MODES
         and action in LAUNCHING_ACTIONS
         and bool(outcome.launched)
         and not outcome.messages

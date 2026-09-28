@@ -572,8 +572,8 @@ class FocusAfterLaunchTest(unittest.TestCase):
 
 
 class CloseAfterLaunchTest(unittest.TestCase):
-    """`focus_mode = "close"` gets the dashboard out of the way once the
-    services are up -- and only then."""
+    """`close`, `first` and `last` get the dashboard out of the way once the
+    services are up -- and only then. `stay` is the one that keeps it."""
 
     def _launch(self, action="start", settings=None, state=IDLE, client=None):
         record = WorkspaceRecord("w1:p1", {} if state is IDLE else {
@@ -618,10 +618,34 @@ class CloseAfterLaunchTest(unittest.TestCase):
         self.assertTrue(result.messages)
         self.assertFalse(should_close_after("start", FOCUS_CLOSE, result))
 
-    def test_the_other_modes_never_close(self):
+    def test_stay_never_closes(self):
         result = self._launch(settings=Settings(focus_mode=FOCUS_STAY))
-        for mode in (FOCUS_STAY, FOCUS_FIRST, FOCUS_LAST):
-            self.assertFalse(should_close_after("start", mode, result))
+        self.assertFalse(should_close_after("start", FOCUS_STAY, result))
+
+    def test_first_and_last_close_once_the_tab_has_focus(self):
+        """Jumping to the tab is the point: a popup left in front of it, or an
+        overlay waiting in the tab you just left, is one more key to press."""
+        for mode in (FOCUS_FIRST, FOCUS_LAST):
+            with self.subTest(mode=mode):
+                client = FakeClient(panes={"w1:p1"})
+                result = self._launch(settings=Settings(focus_mode=mode), client=client)
+                self.assertIn("tab_focus", [call[0] for call in client.calls])
+                self.assertTrue(should_close_after("start", mode, result))
+
+    def test_a_failed_focus_leaves_the_dashboard_open(self):
+        """The services are up, but the user is not where they asked to be:
+        the dashboard stays to say so."""
+        for mode in (FOCUS_FIRST, FOCUS_LAST):
+            with self.subTest(mode=mode):
+                client = FakeClient(panes={"w1:p1"}, fail={"tab_focus"})
+                result = self._launch(settings=Settings(focus_mode=mode), client=client)
+                self.assertTrue(result.messages)
+                self.assertFalse(should_close_after("start", mode, result))
+
+    def test_first_and_last_leave_it_open_after_a_stop(self):
+        result = self._launch(action="stop", state=RUNNING,
+                              settings=Settings(focus_mode=FOCUS_LAST))
+        self.assertFalse(should_close_after("stop", FOCUS_LAST, result))
 
     def test_close_mode_focuses_nothing(self):
         """Closing and focusing are alternatives, not a sequence."""

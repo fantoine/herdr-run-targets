@@ -338,7 +338,7 @@ class Dashboard:
     def act(self, action: str) -> bool:
         """Apply an action to the selection. Returns whether to close.
 
-        Closing is a setting (`focus_mode = "close"`), not a behaviour: a
+        Closing is a setting (every `focus_mode` but `stay`), not a behaviour: a
         dashboard that vanishes is only welcome once the services are up and
         there is nothing left to read.
         """

@@ -180,7 +180,7 @@ popup_height = "40%"
 | Setting | Effect |
 | --- | --- |
 | `label_prefix` / `label_suffix` | Wrap the target's name in the tab label. Applied when the tab is created, so changing them leaves existing tabs alone |
-| `focus_mode` | What happens after a batch launch: `stay` on the dashboard, jump to the `first` / `last` tab of the batch, or `close` the dashboard and get back to work |
+| `focus_mode` | What happens after a batch launch: `stay` on the dashboard, jump to the `first` / `last` tab of the batch and close the dashboard, or `close` it and stay where you are |
 | `placement` | `overlay` covers the pane you are on; `popup` is a centred, sized box |
 | `popup_width` / `popup_height` | Popup size, in terminal cells or a percentage of the window. Omit either for Herdr's half-size default. Ignored by `overlay`, which Herdr refuses to size |
 
@@ -233,9 +233,10 @@ you want to manage.
 logs on screen, and restarting reuses the same tab. `x` is what removes a tab.
 
 **Closing the dashboard leaves every service running.** It owns no tab of its
-own, so the key brings it straight back. With `focus_mode = "close"` it closes
-itself once a launch is through — but stays up if the batch had anything to
-report, so a skip or a failure is never taken off screen unread.
+own, so the key brings it straight back. With `focus_mode` set to `close`,
+`first` or `last` it closes itself once a launch is through — but stays up if
+the batch had anything to report, so a skip or a failure is never taken off
+screen unread.
 
 **An action with nothing to do says so** rather than failing silently — pressing
 `s` on a stopped service prints `api: already stopped, stop skipped`.
