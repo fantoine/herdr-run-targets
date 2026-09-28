@@ -5,7 +5,7 @@
 
   **Every dev service your repo declares, one keypress away.**
 
-  ![version](https://img.shields.io/badge/version-0.3.2-2B8ABF)
+  ![version](https://img.shields.io/badge/version-0.4.0-2B8ABF)
   [![CI](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml/badge.svg)](https://github.com/fantoine/herdr-run-targets/actions/workflows/ci.yml)
   ![license](https://img.shields.io/badge/license-MIT-blue)
   ![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.2-4AABDF)
@@ -188,6 +188,23 @@ Edits take effect on the next launch — no dashboard restart. A value the plugi
 does not understand is reported in the dashboard's footer rather than applied
 silently.
 
+### Per repository
+
+`.herdr-run.toml` and `.herdr-run.local.toml` can carry the same `[tabs]` and
+`[dashboard]` sections as `config.toml`, next to their targets. The three files
+merge key by key — `config.toml`, then the team file, then your local file — so
+a file sets only what it names:
+
+```toml
+# .herdr-run.local.toml — jump to the new tab in this project only
+[dashboard]
+focus_mode = "last"
+```
+
+`placement`, `popup_width` and `popup_height` stay in `config.toml`: the key
+opens the pane before it knows which repository you are in. Set in a project
+file, they are reported in the footer and ignored.
+
 **Overlay or popup?** An overlay is an ordinary pane: your key closes it as well
 as opens it. A popup is centred and sized, but session-modal and belongs to no
 pane — so it is `q` that closes it, not the key that opened it.
@@ -249,7 +266,8 @@ herdr plugin log list --plugin fantoine.run-targets --limit 20
 | `No targets in <repository>. Add .herdr-run.toml or .herdr-run.local.toml` | No configuration was found. If the repository name is not the one you expected, the dashboard opened on the wrong directory. |
 | `<file>: invalid TOML (...)` | Fix the syntax; the other file still applies meanwhile. |
 | `<file>: target 'x' has an unsafe cwd; skipped` | `cwd` must stay inside the repository — no absolute path, no `..`. |
-| `config.toml: unknown focus_mode '...'` | Use `stay`, `first` or `last`. |
+| `<file>: unknown focus_mode '...'` | Use `stay`, `first`, `last` or `close`. |
+| `<file>: dashboard.placement is only read from the plugin's config.toml; ignored` | Move `placement` and `popup_*` to the plugin's `config.toml`. |
 | `config.toml: unknown placement '...'` | Use `overlay` or `popup`. |
 | `config.toml: unsupported popup_width '...'` | A number of cells (`24`) or a percentage (`"45%"`). |
 | `<name>: still running after stop, restart skipped` | The service ignored the interrupt. Stop it yourself in its tab, then start it again. |

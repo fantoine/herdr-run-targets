@@ -258,7 +258,7 @@ class Dashboard:
         # Settings are re-read on every tick, like the target files: a prefix or
         # focus mode edited in another pane takes effect on the next launch,
         # with no dashboard restart.
-        self.settings, settings_warnings = load_settings()
+        self.settings, settings_warnings = load_settings(self.repo_root)
         # `refresh` never touches `messages`: a configuration warning is a
         # permanent state of the files, an action's feedback is a one-off event.
         # Conflating them would erase, on every refresh, the "skipped" the user

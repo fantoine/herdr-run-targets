@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from run_targets.config import LOCAL_CONFIG_FILE, TEAM_CONFIG_FILE
 from run_targets.settings import (
     FOCUS_CLOSE,
     FOCUS_FIRST,
@@ -148,6 +149,104 @@ class LoadSettingsTest(unittest.TestCase):
                 settings, warnings = load_settings()
         self.assertEqual(settings.label_prefix, "svc/")
         self.assertEqual(warnings, [])
+
+
+class ProjectSettingsTest(unittest.TestCase):
+    """The repository's own files can override the plugin's settings."""
+
+    def setUp(self):
+        self._plugin = tempfile.TemporaryDirectory()
+        self._repo = tempfile.TemporaryDirectory()
+        self.plugin_dir = self._plugin.name
+        self.repo = self._repo.name
+        self._env = patch.dict(
+            os.environ, {"HERDR_PLUGIN_CONFIG_DIR": self.plugin_dir}, clear=False
+        )
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._plugin.cleanup()
+        self._repo.cleanup()
+
+    def write(self, directory, name, text):
+        with open(os.path.join(directory, name), "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def test_the_team_file_overrides_the_plugin_config(self):
+        self.write(self.plugin_dir, SETTINGS_FILE, '[dashboard]\nfocus_mode = "close"\n')
+        self.write(self.repo, TEAM_CONFIG_FILE, '[dashboard]\nfocus_mode = "last"\n')
+        settings, warnings = load_settings(self.repo)
+        self.assertEqual(settings.focus_mode, FOCUS_LAST)
+        self.assertEqual(warnings, [])
+
+    def test_the_local_file_overrides_the_team_file(self):
+        self.write(self.repo, TEAM_CONFIG_FILE, '[dashboard]\nfocus_mode = "last"\n')
+        self.write(self.repo, LOCAL_CONFIG_FILE, '[dashboard]\nfocus_mode = "first"\n')
+        settings, _ = load_settings(self.repo)
+        self.assertEqual(settings.focus_mode, FOCUS_FIRST)
+
+    def test_layers_merge_key_by_key(self):
+        """A file that sets one key must not reset the others to their default."""
+        self.write(self.plugin_dir, SETTINGS_FILE, '[tabs]\nlabel_suffix = " *"\n')
+        self.write(self.repo, TEAM_CONFIG_FILE, '[tabs]\nlabel_prefix = "run:"\n')
+        self.write(self.repo, LOCAL_CONFIG_FILE, '[dashboard]\nfocus_mode = "last"\n')
+        settings, warnings = load_settings(self.repo)
+        self.assertEqual(settings.label_suffix, " *")
+        self.assertEqual(settings.label_prefix, "run:")
+        self.assertEqual(settings.focus_mode, FOCUS_LAST)
+        self.assertEqual(warnings, [])
+
+    def test_targets_and_settings_share_the_file(self):
+        self.write(
+            self.repo,
+            TEAM_CONFIG_FILE,
+            '[dashboard]\nfocus_mode = "last"\n\n'
+            '[[target]]\nname = "api"\ncommand = "make api"\n',
+        )
+        settings, warnings = load_settings(self.repo)
+        self.assertEqual(settings.focus_mode, FOCUS_LAST)
+        self.assertEqual(warnings, [])
+
+    def test_an_invalid_project_value_keeps_the_layer_below(self):
+        """The fallback is what the plugin config says, not the shipped default."""
+        self.write(self.plugin_dir, SETTINGS_FILE, '[dashboard]\nfocus_mode = "close"\n')
+        self.write(self.repo, LOCAL_CONFIG_FILE, '[dashboard]\nfocus_mode = "middle"\n')
+        settings, warnings = load_settings(self.repo)
+        self.assertEqual(settings.focus_mode, FOCUS_CLOSE)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn(LOCAL_CONFIG_FILE, warnings[0])
+        self.assertIn("middle", warnings[0])
+
+    def test_placement_in_a_project_file_is_reported_not_applied(self):
+        """The toggle opens the pane before any repository is known: a project
+        placement could never take effect, and ignoring it silently would read
+        as a bug."""
+        self.write(
+            self.repo,
+            TEAM_CONFIG_FILE,
+            '[dashboard]\nplacement = "popup"\npopup_width = "60%"\n',
+        )
+        settings, warnings = load_settings(self.repo)
+        self.assertEqual(settings.placement, PLACEMENT_OVERLAY)
+        self.assertIsNone(settings.popup_width)
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(all(TEAM_CONFIG_FILE in warning for warning in warnings))
+        self.assertIn("placement", warnings[0])
+
+    def test_broken_project_toml_is_left_to_the_target_loader(self):
+        """`load_run_config` already reports it; a second line would be noise."""
+        self.write(self.plugin_dir, SETTINGS_FILE, '[dashboard]\nfocus_mode = "close"\n')
+        self.write(self.repo, TEAM_CONFIG_FILE, "[dashboard\n")
+        settings, warnings = load_settings(self.repo)
+        self.assertEqual(settings.focus_mode, FOCUS_CLOSE)
+        self.assertEqual(warnings, [])
+
+    def test_without_a_repository_only_the_plugin_config_counts(self):
+        self.write(self.plugin_dir, SETTINGS_FILE, '[dashboard]\nfocus_mode = "close"\n')
+        self.write(self.repo, TEAM_CONFIG_FILE, '[dashboard]\nfocus_mode = "last"\n')
+        settings, _ = load_settings()
+        self.assertEqual(settings.focus_mode, FOCUS_CLOSE)
 
 
 if __name__ == "__main__":
