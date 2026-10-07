@@ -8,6 +8,7 @@ import time
 from collections.abc import Sequence
 
 from . import herdr
+from .badges import publish
 from .config import ORIGIN_LOCAL, load_run_config
 from .services import (
     ServiceView,
@@ -241,6 +242,8 @@ class Dashboard:
         self.messages: list[str] = []
         self.messages_at: float = 0.0
         self.views: list[ServiceView] = []
+        # Last counts the sidebar received, so an unchanged second is not re-sent.
+        self.badges: tuple[int, int] | None = None
 
     def names(self) -> list[str]:
         return [view.target.name for view in self.views]
@@ -264,7 +267,9 @@ class Dashboard:
         # Conflating them would erase, on every refresh, the "skipped" the user
         # needs to see.
         self.warnings = settings_warnings + warnings
-        self.views = observe(self.record(), targets, herdr)
+        record = self.record()
+        self.views = observe(record, targets, herdr)
+        self.badges = publish(self.workspace_id, record, herdr, self.badges)
         if self.cursor >= len(self.views):
             self.cursor = max(0, len(self.views) - 1)
 

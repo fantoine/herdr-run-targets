@@ -16,3 +16,13 @@ id = "dashboard"
 title = "Run targets"
 placement = "overlay"
 command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/dashboard.py\""]
+
+# Keep the Spaces sidebar's service counts current while the dashboard is
+# closed: a crashed service shows up on the next tab or workspace switch.
+[[events]]
+on = "workspace.focused"
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/report_badges.py\""]
+
+[[events]]
+on = "tab.focused"
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/report_badges.py\""]

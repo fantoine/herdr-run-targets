@@ -922,6 +922,9 @@ class VisibleLinesTest(unittest.TestCase):
 
 
 class NoPanes:
+    def __init__(self):
+        self.calls = []
+
     def live_pane_ids(self):
         return set()
 
@@ -931,10 +934,32 @@ class NoPanes:
     def has_foreground_command(self, info):
         return False
 
+    def herdr_call(self, args):
+        self.calls.append(list(args))
+        return ""
+
 
 class Broken:
     def live_pane_ids(self):
         raise RuntimeError("herdr pane list failed: socket closed")
+
+
+class DashboardBadgesTest(unittest.TestCase):
+    """The open dashboard keeps the sidebar's service counts current."""
+
+    def test_refresh_publishes_the_counts_once_until_they_change(self):
+        from run_targets.badges import badge_args
+        from run_targets.tui import Dashboard
+
+        with tempfile.TemporaryDirectory() as root:
+            dashboard = Dashboard(workspace_id="w1", repo_root=root, warnings=[])
+            client = NoPanes()
+            with patch("run_targets.tui.herdr", client), \
+                 patch("run_targets.tui.load_state", return_value={}), \
+                 patch.dict(os.environ, {"HERDR_PLUGIN_CONFIG_DIR": root}, clear=False):
+                dashboard.refresh()
+                dashboard.refresh()
+            self.assertEqual(client.calls, [badge_args("w1", 0, 0)])
 
 
 class DashboardMessagesTest(unittest.TestCase):

@@ -219,6 +219,26 @@ pane — so it is `q` that closes it, not the key that opened it.
 | `idle` | not started yet |
 | `gone` | its tab was closed |
 
+### In the Spaces sidebar
+
+The plugin reports two counts on each workspace: `$svc_up` (`▶2`, services
+running) and `$svc_down` (`✕1`, services that ended on their own). A count of
+zero is cleared, and a service you stopped is not counted. Herdr shows them only
+where your sidebar layout names them:
+
+```toml
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  ["branch", "git_status"],
+  [{ token = "$svc_up", fg = "#859900" }, { token = "$svc_down", fg = "#dc322f" }],
+]
+```
+
+The open dashboard updates them every second. With the dashboard closed, a
+crash shows up on your next tab or workspace switch. On a Herdr without
+`workspace report-metadata`, the counts are silently skipped.
+
 ## ⚠️ Worth knowing
 
 **Targets run as commands in your shell**, and `.herdr-run.toml` is committed
